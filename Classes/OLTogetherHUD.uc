@@ -4,22 +4,51 @@ var array<string> ChatLines;
 var array<string> Notifications;
 var array<float> NotificationTimes;
 
-var int ChatScrollOffset;
+var int ChatScrollIndex;
 var int MaxChatHistory;
 
 var float UIScale;
 
-var float LastChatActivityTime;
-var float ChatVisibleAlpha;
-var float PanelOpenAnim;
+var float LastChatInteractionTime;
+var float ChatVisibilityAlpha;
+var float ChatPanelOpenAnim;
 var float LastChatLineTime;
 var float ChatIdleFadeDelay;
 var float ChatFadeDuration;
 
+var int MouseX, MouseY;
+
 var float NameFadeStartDist;
 var float NameFadeEndDist;
+var float NameNearFadeStart;
+var float NameNearFadeEnd;
+
+var string ModVersion;
+
+// --- In-game settings menu ---
+var bool  bSettingsOpen;
+var float SettingsOpenAnim;        // 0 = closed, 1 = fully open
+var float SettingsOpenTarget;      // where SettingsOpenAnim is heading
+var int   SettingsOpenAnimVariant; // which of the entrance/exit styles is playing
+var int   SettingsHighlightedRow;    // highlighted row
+var bool  bRebindListening;    // waiting for a key press to bind
+var int   RebindSlotIndex;  // which rebind row (0-3) is being rebound
+var int   HoveredSettingsRow;      // row the mouse is hovering (-1=none, -2=back, 0+=rows, 100+=rebind)
+var float SettingsTabAnim;     // 0=main tab, 1=rebind tab
+var float SettingsTabTarget;   // where SettingsTabAnim is heading
+var int   SettingsTabTransitionVariant; // which style for tab transition
+
+// --- Speedrun HUD ---
+var float SpeedrunTimerAlpha;
+var float SpeedrunTimer;
+var float SpeedrunAnimFlash;
 
 const REF_HEIGHT = 720.0;
+const NUM_SETTINGS_ANIMS = 16;
+const NUM_CHAT_ANIMS = 8;
+
+// Chat animations states
+var int ChatAnimVariant;
 
 function AddChatLine(string Msg)
 {
@@ -30,8 +59,8 @@ function AddChatLine(string Msg)
     while (ChatLines.Length > MaxChatHistory)
         ChatLines.Remove(0, 1);
 
-    if (ChatScrollOffset > 0)
-        ChatScrollOffset++;
+    if (ChatScrollIndex > 0)
+        ChatScrollIndex++;
 
     NoteChatActivity();
 }
@@ -52,28 +81,34 @@ function AddNotification(string Msg)
 
 function NoteChatActivity()
 {
-    LastChatActivityTime = WorldInfo.TimeSeconds;
+    LastChatInteractionTime = WorldInfo.TimeSeconds;
+    // Pick a random chat animation variant on activity for variety
+    ChatAnimVariant = Rand(NUM_CHAT_ANIMS);
 }
 
 function ScrollChat(int Delta)
 {
-    ChatScrollOffset += Delta;
-    if (ChatScrollOffset < 0)
-        ChatScrollOffset = 0;
+    ChatScrollIndex += Delta;
+    if (ChatScrollIndex < 0)
+        ChatScrollIndex = 0;
 
     NoteChatActivity();
 }
 
 function ResetChatVisibility()
 {
-    LastChatActivityTime = WorldInfo.TimeSeconds;
-    ChatVisibleAlpha = 1.0;
-    PanelOpenAnim = 1.0;
+    LastChatInteractionTime = WorldInfo.TimeSeconds;
+    ChatVisibilityAlpha = 1.0;
+    ChatPanelOpenAnim = 1.0;
 }
 
 Event OnLostFocusPause(Bool bEnable)
 {
-    return;
+    local OLTogetherController PC;
+    PC = OLTogetherController(PlayerOwner);
+    if (PC != None && PC.Settings != None && !PC.Settings.bPauseOnLossFocus)
+        return;
+    Super.OnLostFocusPause(bEnable);
 }
 
 function float ViewW()
@@ -117,6 +152,7 @@ function DrawPanel(float X, float Y, float W, float H, float GlobalAlpha)
 
 function DrawLabel(string Text, float X, float Y, float FontScale, byte R, byte G, byte B, byte A)
 {
+    Canvas.Font = class'Engine'.Static.GetLargeFont();
     Canvas.SetDrawColor(0, 0, 0, Min(A, 200));
     Canvas.SetPos(X + FMax(1.0, UIScale), Y + FMax(1.0, UIScale));
     Canvas.DrawText(Text, false, FontScale, FontScale);
@@ -157,13 +193,14 @@ function string TrimTextToWidth(string Text, float MaxWidth, float FontScale)
     return "";
 }
 
+// Appends the word-wrapped lines of Text onto OutLines. Note: this
+// *appends*, it does not clear OutLines, since callers accumulate wrapped
+// output from multiple source lines into the same array.
 function WrapLine(string Text, float MaxWidth, float FontScale, out array<string> OutLines)
 {
     local array<string> Words;
     local string CurLine, TestLine, Word, Chunk;
     local int I;
-
-    OutLines.Length = 0;
 
     if (Text == "")
     {
@@ -263,26 +300,39 @@ function DrawNameTag(OLTogetherController PC)
     local vector NameScreen, NameWorld, CamLoc;
     local rotator CamRot;
     local float NameXL, NameYL, NameX, NameY, TextScale, Pad;
-    local float Dist, DistAlpha, A;
+    local float Dist, DistAlpha, NearAlpha, A;
+    local float TagW, TagX, TagY, BarW, BarH, BarX, BarY, HealthPct;
+    local float TalkBoxSize, TalkBoxX, TalkBoxY;
+    local byte HR, HG, HB;
     local string NameText;
 
-    if (PC.DummyPlayer == None || PC.DummyPlayerName == "")
+    if (PC.RemotePawn == None || PC.RemotePlayerName == "")
         return;
 
     TextScale = 0.85 * UIScale;
     Pad = 5.0 * UIScale;
 
-    NameText = PC.DummyPlayerName;
-    NameWorld = PC.DummyPlayer.Location + vect(0.0, 0.0, 175.0);
+    NameText = PC.RemotePlayerName;
+    NameWorld = PC.RemotePawn.Location + vect(0.0, 0.0, 175.0);
 
     CamLoc = NameWorld;
     PC.GetPlayerViewPoint(CamLoc, CamRot);
     Dist = VSize(NameWorld - CamLoc);
 
+    // Far fade: tag dims out as the remote player gets far away.
     DistAlpha = 1.0;
     if (Dist > NameFadeStartDist)
         DistAlpha = 1.0 - (Dist - NameFadeStartDist) / (NameFadeEndDist - NameFadeStartDist);
     DistAlpha = FClamp(DistAlpha, 0.0, 1.0);
+
+    // Near fade: tag becomes transparent up close and disappears when very near,
+    // so it does not obstruct face-to-face interactions.
+    NearAlpha = 1.0;
+    if (Dist < NameNearFadeStart)
+        NearAlpha = (Dist - NameNearFadeEnd) / (NameNearFadeStart - NameNearFadeEnd);
+    NearAlpha = FClamp(NearAlpha, 0.0, 1.0);
+
+    DistAlpha = FMin(DistAlpha, NearAlpha);
     if (DistAlpha <= 0.01)
         return;
 
@@ -294,51 +344,88 @@ function DrawNameTag(OLTogetherController PC)
 
     NameXL = MeasureW(NameText, TextScale);
     NameYL = MeasureH(NameText, TextScale);
-    NameX = NameScreen.X - (NameXL * 0.5);
-    NameY = NameScreen.Y - NameYL - 6.0 * UIScale;
 
-    DrawFilledBox(NameX - Pad, NameY - Pad * 0.5, NameXL + Pad * 2.0, NameYL + Pad, 12, 13, 16, byte(190.0 * DistAlpha));
-    DrawFilledBox(NameX - Pad, NameY - Pad * 0.5, NameXL + Pad * 2.0, FMax(1.0, 2.0 * UIScale), 120, 122, 130, byte(220.0 * DistAlpha));
+    BarH = FMax(3.0, 5.0 * UIScale);
+    TalkBoxSize = 10.0 * UIScale;
+    // The tag is as wide as the name, but never narrower than the health bar.
+    // Add room for the talking indicator when it's active.
+    TagW = FMax(NameXL + (PC.bRemoteTalking ? TalkBoxSize + 8.0 * UIScale : 0.0), 90.0 * UIScale);
+    TagX = NameScreen.X - (TagW * 0.5);
+    NameX = NameScreen.X - (NameXL * 0.5);
+    NameY = NameScreen.Y - NameYL - BarH - 10.0 * UIScale;
+    TagY = NameY - Pad * 0.5;
+
+    // Backing plate + accent line spanning the whole tag width.
+    DrawFilledBox(TagX - Pad, TagY, TagW + Pad * 2.0, NameYL + BarH + Pad * 2.0, 12, 13, 16, byte(190.0 * DistAlpha));
+    DrawFilledBox(TagX - Pad, TagY, TagW + Pad * 2.0, FMax(1.0, 2.0 * UIScale), 120, 122, 130, byte(220.0 * DistAlpha));
+
     DrawLabel(NameText, NameX, NameY, TextScale, 230, 232, 240, byte(A));
+
+    if (PC.bRemoteTalking)
+    {
+        TalkBoxX = NameX + NameXL + 8.0 * UIScale;
+        TalkBoxY = NameY + FMax(0.0, (NameYL - TalkBoxSize) * 0.5);
+        DrawFilledBox(TalkBoxX, TalkBoxY, TalkBoxSize, TalkBoxSize, 255, 255, 255, byte(A));
+    }
+
+    // Health bar (green, max 100) sourced from the replicated PreciseHealth.
+    HealthPct = FClamp(float(PC.RemoteHealth) / 100.0, 0.0, 1.0);
+    BarW = TagW;
+    BarX = TagX;
+    BarY = NameY + NameYL + 3.0 * UIScale;
+
+    DrawFilledBox(BarX, BarY, BarW, BarH, 30, 32, 36, byte(200.0 * DistAlpha));
+    if (HealthPct > 0.0)
+    {
+        // Shade from green toward red as health drops, staying mostly green.
+        HR = byte((1.0 - HealthPct) * 200.0);
+        HG = byte(60.0 + HealthPct * 175.0);
+        HB = 60;
+        DrawFilledBox(BarX, BarY, BarW * HealthPct, BarH, HR, HG, HB, byte(235.0 * DistAlpha));
+    }
+    DrawFilledBox(BarX, BarY, BarW, FMax(1.0, UIScale), 90, 92, 100, byte(120.0 * DistAlpha));
 }
 
 function UpdateChatAnimation(OLTogetherController PC, float Delta)
 {
-    local float TargetVisible, IdleTime, Speed;
+    local float TargetVisible, IdleTime;
+    local float ShowRate, HideRate, OpenRate;
     local bool bWantVisible;
 
-    Speed = 6.0;
+    // Exponential smoothing rates. Higher = snappier. Fade-in stays quick and
+    // responsive; fade-out is gentler so the panel eases away rather than popping.
+    ShowRate = 14.0;
+    HideRate = 6.0;
+    OpenRate = 16.0;
 
     bWantVisible = false;
     if (PC.bChatMode)
         bWantVisible = true;
-    else if (ChatScrollOffset > 0)
+    else if (ChatScrollIndex > 0)
         bWantVisible = true;
     else
     {
-        IdleTime = WorldInfo.TimeSeconds - LastChatActivityTime;
+        IdleTime = WorldInfo.TimeSeconds - LastChatInteractionTime;
         if (IdleTime < ChatIdleFadeDelay)
             bWantVisible = true;
-        else if (IdleTime < ChatIdleFadeDelay + ChatFadeDuration)
-            ChatVisibleAlpha = FMin(ChatVisibleAlpha, 1.0 - (IdleTime - ChatIdleFadeDelay) / ChatFadeDuration);
     }
 
     TargetVisible = bWantVisible ? 1.0 : 0.0;
 
-    if (bWantVisible)
-        ChatVisibleAlpha = FMin(1.0, ChatVisibleAlpha + Delta * Speed);
-    else if (ChatVisibleAlpha > TargetVisible)
-        ChatVisibleAlpha = FMax(0.0, ChatVisibleAlpha - Delta * (1.0 / FMax(0.1, ChatFadeDuration)));
-
-    ChatVisibleAlpha = FClamp(ChatVisibleAlpha, 0.0, 1.0);
-
-    if (PC.bChatMode)
-        PanelOpenAnim = FMin(1.0, PanelOpenAnim + Delta * Speed);
+    // Frame-rate independent approach toward the target alpha.
+    if (TargetVisible > ChatVisibilityAlpha)
+        ChatVisibilityAlpha += (TargetVisible - ChatVisibilityAlpha) * FMin(1.0, Delta * ShowRate);
     else
-        PanelOpenAnim = FMax(0.0, PanelOpenAnim - Delta * Speed);
+        ChatVisibilityAlpha += (TargetVisible - ChatVisibilityAlpha) * FMin(1.0, Delta * HideRate);
 
-    if (!PC.bChatMode && ChatVisibleAlpha <= 0.01)
-        ChatScrollOffset = 0;
+    ChatVisibilityAlpha = FClamp(ChatVisibilityAlpha, 0.0, 1.0);
+
+    // Input box open/close eases with the same smoothing for a consistent feel.
+    ChatPanelOpenAnim += ((PC.bChatMode ? 1.0 : 0.0) - ChatPanelOpenAnim) * FMin(1.0, Delta * OpenRate);
+    ChatPanelOpenAnim = FClamp(ChatPanelOpenAnim, 0.0, 1.0);
+
+    if (!PC.bChatMode && ChatVisibilityAlpha <= 0.01)
+        ChatScrollIndex = 0;
 }
 
 function DrawChatPanel(OLTogetherController PC)
@@ -347,23 +434,23 @@ function DrawChatPanel(OLTogetherController PC)
     local float PanelX, PanelY, PanelW, PanelH, Pad, LineH, FontBody, FontSmall;
     local float CX, CY, ContentW, LogH, InputH;
     local float Margin;
-    local float GA, EaseOpen, SlideY;
-    local int I, VisibleLines, Total, StartIdx, MaxOffset, Drawn;
+    local float GA, EaseOpen, SlideY, OffX, OffY, Sc;
+    local int I, VisibleLines, Total, StartRowIndex, MaxOffset, Drawn, LinesToDraw;
     local string InputText, ScrollHint;
 
-    GA = ChatVisibleAlpha;
+    GA = ChatVisibilityAlpha;
     if (GA <= 0.01)
         return;
 
     Margin = 16.0 * UIScale;
-    Pad = 12.0 * UIScale;
-    FontBody = 0.80 * UIScale;
-    FontSmall = 0.75 * UIScale;
-    LineH = MeasureH("Ag", FontBody) + 4.0 * UIScale;
+    Pad = 8.0 * UIScale;
+    FontBody = 0.72 * UIScale;
+    FontSmall = 0.68 * UIScale;
+    LineH = MeasureH("Ag", FontBody) + 2.0 * UIScale;
 
-    EaseOpen = PanelOpenAnim * PanelOpenAnim * (3.0 - 2.0 * PanelOpenAnim);
+    EaseOpen = ChatPanelOpenAnim * ChatPanelOpenAnim * (3.0 - 2.0 * ChatPanelOpenAnim);
 
-    PanelW = FClamp(ViewW() * 0.30, 320.0 * UIScale, 560.0 * UIScale);
+    PanelW = FClamp(ViewW() * 0.24, 280.0 * UIScale, 420.0 * UIScale);
     if (PanelW > ViewW() - Margin * 2.0)
         PanelW = ViewW() - Margin * 2.0;
     if (PanelW < 200.0)
@@ -371,13 +458,15 @@ function DrawChatPanel(OLTogetherController PC)
 
     ContentW = PanelW - Pad * 2.0;
 
-    InputH = (PC.bChatMode ? (LineH + Pad * 0.5) : LineH) * EaseOpen + LineH * (1.0 - EaseOpen);
+    // Reserve the same strip height regardless of mode so the panel never
+    // jumps when the player toggles chat on/off.
+    InputH = LineH + Pad * 0.5;
 
-    VisibleLines = int((ViewH() * 0.26) / LineH);
-    if (VisibleLines < 4)
-        VisibleLines = 4;
-    if (VisibleLines > 14)
-        VisibleLines = 14;
+    VisibleLines = int((ViewH() * 0.34) / LineH);
+    if (VisibleLines < 6)
+        VisibleLines = 6;
+    if (VisibleLines > 16)
+        VisibleLines = 16;
 
     Display.Length = 0;
     for (I = 0; I < ChatLines.Length; I++)
@@ -388,19 +477,26 @@ function DrawChatPanel(OLTogetherController PC)
     MaxOffset = Total - VisibleLines;
     if (MaxOffset < 0)
         MaxOffset = 0;
-    if (ChatScrollOffset > MaxOffset)
-        ChatScrollOffset = MaxOffset;
+    if (ChatScrollIndex > MaxOffset)
+        ChatScrollIndex = MaxOffset;
 
-    if (Total < VisibleLines)
-        VisibleLines = Max(Total, 1);
+    // Compact height: only reserve space for lines that actually exist,
+    // clamped to the visible-lines cap.  When the chat is idle and has
+    // few messages the panel shrinks accordingly.
+    LinesToDraw = Total - ChatScrollIndex;
+    if (LinesToDraw < 0)
+        LinesToDraw = 0;
+    if (LinesToDraw > VisibleLines)
+        LinesToDraw = VisibleLines;
 
-    LogH = VisibleLines * LineH;
-
+    LogH = LinesToDraw * LineH;
     PanelH = Pad * 2.0 + LogH + InputH;
 
-    SlideY = (1.0 - GA) * 24.0 * UIScale;
+    // Apply chat animation offsets for varied entrance/exit effects
+    GetChatAnimOffsets(OffX, OffY, Sc);
+    SlideY = (1.0 - GA) * 24.0 * UIScale + OffY;
 
-    PanelX = Margin;
+    PanelX = Margin + OffX;
     PanelY = ViewH() - PanelH - Margin + SlideY;
     if (PanelY < Margin)
         PanelY = Margin;
@@ -410,33 +506,29 @@ function DrawChatPanel(OLTogetherController PC)
     CX = PanelX + Pad;
     CY = PanelY + Pad;
 
-    StartIdx = Total - VisibleLines - ChatScrollOffset;
-    if (StartIdx < 0)
-        StartIdx = 0;
+    // Draw from the most recent lines upward; StartRowIndex is where to start
+    // reading from the Display array (oldest visible line).
+    StartRowIndex = Total - LinesToDraw - ChatScrollIndex;
+    if (StartRowIndex < 0)
+        StartRowIndex = 0;
 
     Drawn = 0;
-    for (I = StartIdx; I < Total && Drawn < VisibleLines; I++)
+    for (I = StartRowIndex; I < Total && Drawn < LinesToDraw; I++)
     {
         DrawLabel(Display[I], CX, CY, FontSmall, 220, 222, 228, byte(255.0 * GA));
         CY += LineH;
         Drawn++;
     }
 
-    while (Drawn < VisibleLines)
-    {
-        CY += LineH;
-        Drawn++;
-    }
-
     if (Total > VisibleLines)
-        DrawScrollbar(PanelX + PanelW - 5.0 * UIScale, PanelY + Pad, LogH, Total, VisibleLines, StartIdx, GA);
+        DrawScrollbar(PanelX + PanelW - 5.0 * UIScale, PanelY + Pad, LogH, Total, VisibleLines, StartRowIndex, GA);
 
     DrawFilledBox(CX, CY + Pad * 0.2, ContentW, FMax(1.0, UIScale), 55, 57, 63, byte(160.0 * GA));
     CY += Pad * 0.5;
 
     if (PC.bChatMode)
     {
-        InputText = "> " $ PC.ChatInput;
+        InputText = "> " $ PC.ChatText;
         InputText = TrimTextToWidth(InputText, ContentW, FontBody);
         InputText = InputText $ (int(WorldInfo.TimeSeconds * 2.0) % 2 == 0 ? "_" : "");
         DrawFilledBox(CX - 4.0 * UIScale, CY - 2.0 * UIScale, ContentW + 8.0 * UIScale, LineH + 4.0 * UIScale, 26, 28, 34, byte(210.0 * GA));
@@ -451,7 +543,7 @@ function DrawChatPanel(OLTogetherController PC)
     }
 }
 
-function DrawScrollbar(float X, float Y, float H, int Total, int Visible, int StartIdx, float GA)
+function DrawScrollbar(float X, float Y, float H, int Total, int Visible, int StartRowIndex, float GA)
 {
     local float TrackW, ThumbH, ThumbY, Ratio;
 
@@ -461,11 +553,597 @@ function DrawScrollbar(float X, float Y, float H, int Total, int Visible, int St
     Ratio = float(Visible) / float(Total);
     ThumbH = FMax(H * Ratio, 12.0 * UIScale);
     if (Total > Visible)
-        ThumbY = Y + (H - ThumbH) * (float(StartIdx) / float(Total - Visible));
+        ThumbY = Y + (H - ThumbH) * (float(StartRowIndex) / float(Total - Visible));
     else
         ThumbY = Y;
 
     DrawFilledBox(X, ThumbY, TrackW, ThumbH, 130, 132, 140, byte(230.0 * GA));
+}
+
+function bool IsAtMainMenuScreen()
+{
+    local OLGame G;
+
+    // The main menu / title screen is the state before any checkpoint has been
+    // entered, i.e. the current checkpoint name is still unset ('None').
+    G = OLGame(WorldInfo.Game);
+    if (G != None)
+        return G.CurrentCheckpointName == 'None';
+
+    return false;
+}
+
+function DrawMainMenuInfo(OLTogetherController PC)
+{
+    local float X, Y, LineH, TextScale;
+    local string NameLine;
+
+    TextScale = 0.85 * UIScale;
+    LineH = MeasureH("Ag", TextScale) + 3.0 * UIScale;
+
+    X = 22.0 * UIScale;
+    Y = 22.0 * UIScale;
+
+    NameLine = "Logged in as: " $ (PC.LocalPlayerName != "" ? PC.LocalPlayerName : "Player");
+
+    DrawLabel("Multiplayer v" $ ModVersion, X, Y, TextScale, 218, 196, 174, 248);
+    Y += LineH;
+    DrawLabel(NameLine, X, Y, TextScale, 210, 212, 220, 235);
+    Y += LineH;
+    DrawLabel("Enjoy your stay!", X, Y, TextScale, 150, 152, 160, 220);
+}
+
+function DrawSpeedrunHUD(OLTogetherController PC)
+{
+    local float X, Y, TextScale, TimeElapsed, CDScale, Pulse, Alpha;
+    local string TimerText, CDText;
+    local int Min, Sec, Ms;
+
+    TextScale = 1.0 * UIScale;
+
+    if (!PC.bSpeedrunMode)
+        return;
+
+    if (PC.bSpeedrunSequenceActive)
+    {
+        if (PC.SpeedrunCountdownStartTime <= 0.0)
+        {
+            // "Starting race..." phase
+            Alpha = 0.6 + 0.4 * Cos(WorldInfo.TimeSeconds * 3.0);
+            DrawLabel("STARTING RACE...",
+                ViewW() * 0.5 - MeasureW("STARTING RACE...", TextScale * 1.2) * 0.5,
+                ViewH() * 0.45, TextScale * 1.2,
+                255, 200, 100, byte(255.0 * FClamp(Alpha, 0.0, 1.0)));
+        }
+        else
+        {
+            // Dramatic countdown
+            CDScale = TextScale * (4.5 + 1.5 * Cos(WorldInfo.TimeSeconds * 8.0));
+            Pulse = PC.SpeedrunOverlayPulse;
+            Alpha = byte(255.0 * FClamp(0.7 + 0.3 * Sin(Pulse), 0.0, 1.0));
+            CDText = string(PC.SpeedrunCountdownValue);
+            if (PC.SpeedrunCountdownValue == 1)
+            {
+                DrawLabel(CDText,
+                    ViewW() * 0.5 - MeasureW(CDText, CDScale) * 0.5,
+                    ViewH() * 0.42 - MeasureH(CDText, CDScale) * 0.5,
+                    CDScale, 255, 80, 80, Alpha);
+            }
+            else
+            {
+                DrawLabel(CDText,
+                    ViewW() * 0.5 - MeasureW(CDText, CDScale) * 0.5,
+                    ViewH() * 0.42 - MeasureH(CDText, CDScale) * 0.5,
+                    CDScale, 255, 220, 120, Alpha);
+            }
+
+            // GO! flash
+            if (PC.SpeedrunCountdownValue == 0)
+            {
+                DrawLabel("GO!",
+                    ViewW() * 0.5 - MeasureW("GO!", TextScale * 3.0) * 0.5,
+                    ViewH() * 0.55,
+                    TextScale * 3.0, 120, 255, 120, Alpha);
+            }
+        }
+
+        // Dramatic overlay vignette
+        DrawFilledBox(0, 0, ViewW(), ViewH(), 0, 0, 0, byte(PC.SpeedrunOverlayAlpha * 80.0));
+        DrawFilledBox(ViewW() * 0.1, ViewH() * 0.3, ViewW() * 0.8, ViewH() * 0.4, 0, 0, 0, byte(PC.SpeedrunOverlayAlpha * 40.0));
+    }
+    else if (!PC.bSpeedrunCountdownActive && PC.SpeedrunStartTime == 0.0 && !PC.bSpeedrunSequenceActive)
+    {
+        // Pre-race: show ready state
+        X = ViewW() * 0.5;
+        Y = 60.0 * UIScale;
+        if (PC.bSpeedrunReady)
+            DrawLabel("READY", X - MeasureW("READY", TextScale) * 0.5, Y, TextScale, 120, 200, 120, 255);
+        else
+            DrawLabel("H to Ready", X - MeasureW("H to Ready", TextScale) * 0.5, Y, TextScale, 200, 200, 120, 220);
+    }
+
+    // Timer display (bottom-left corner)
+    if (PC.SpeedrunStartTime > 0.0)
+    {
+        TimeElapsed = WorldInfo.TimeSeconds - PC.SpeedrunStartTime;
+        Min = int(TimeElapsed) / 60;
+        Sec = int(TimeElapsed) % 60;
+        Ms = int((TimeElapsed % 1.0) * 100.0);
+        if (Min > 0)
+            TimerText = string(Min) $ ":" $ (Sec < 10 ? "0" : "") $ string(Sec) $ "." $ (Ms < 10 ? "0" : "") $ string(Ms);
+        else
+            TimerText = string(Sec) $ "." $ (Ms < 10 ? "0" : "") $ string(Ms);
+
+        DrawLabel(TimerText,
+            20.0 * UIScale,
+            ViewH() - 30.0 * UIScale,
+            TextScale * 1.5, 220, 220, 240, 255);
+    }
+}
+
+// ============================================================================
+//  In-game settings menu
+// ============================================================================
+
+function OpenSettingsMenu()
+{
+    bSettingsOpen = true;
+    SettingsOpenTarget = 1.0;
+    SettingsHighlightedRow = 0;
+    HoveredSettingsRow = -1;
+    SettingsTabAnim = 0.0;
+    SettingsTabTarget = 0.0;
+    // Pick a random entrance style each time it opens.
+    SettingsOpenAnimVariant = Rand(NUM_SETTINGS_ANIMS);
+}
+
+function CloseSettingsMenu()
+{
+    bSettingsOpen = false;
+    SettingsOpenTarget = 0.0;
+    // A fresh style for the exit as well.
+    SettingsOpenAnimVariant = Rand(NUM_SETTINGS_ANIMS);
+}
+
+function ToggleSettingsMenu()
+{
+    if (bSettingsOpen)
+        CloseSettingsMenu();
+    else
+        OpenSettingsMenu();
+}
+
+function int NumSettingsRows()
+{
+    return 10;
+}
+
+function int NumRebindRows()
+{
+    return 4;
+}
+
+function string RebindRowLabel(int RowIndex)
+{
+    switch (RowIndex)
+    {
+        case 0: return "Open Settings";
+        case 1: return "Toggle Ready";
+        case 2: return "Push To Talk";
+        case 3: return "Force Start";
+    }
+    return "";
+}
+
+function string RebindRowValue(OLTogetherController PC, int RowIndex)
+{
+    if (bRebindListening && RebindSlotIndex == RowIndex)
+        return "Press key...";
+    switch (RowIndex)
+    {
+        case 0: return string(PC.BindOpenSettings);
+        case 1: return string(PC.BindSpeedrunReady);
+        case 2: return string(PC.BindPushToTalk);
+        case 3: return string(PC.BindForceStart);
+    }
+    return "";
+}
+
+function CaptureRebindKey(OLTogetherController PC, name Key)
+{
+    switch (RebindSlotIndex)
+    {
+        case 0: PC.BindOpenSettings = Key; break;
+        case 1: PC.BindSpeedrunReady = Key; break;
+        case 2: PC.BindPushToTalk = Key; break;
+        case 3: PC.BindForceStart = Key; break;
+    }
+    bRebindListening = false;
+    RebindSlotIndex = -1;
+    PC.SaveConfig();
+}
+
+function bool InRebindTab()
+{
+    return SettingsHighlightedRow >= 100;
+}
+
+function string SettingsRowLabel(int RowIndex)
+{
+    switch (RowIndex)
+    {
+        case 0: return "Pause On Lost Focus";
+        case 1: return "Mouse Smoothing";
+        case 2: return "Hide Player Names";
+        case 3: return "Mute Everyone";
+        case 4: return "Push To Talk";
+        case 5: return "Auto Reconnect";
+        case 6: return "Force Start";
+        case 7: return "Voice Proximity";
+        case 8: return "Rebind Keys";
+        case 9: return "Close";
+    }
+    return "";
+}
+
+function string SettingsRowValue(OLTogetherController PC, int RowIndex)
+{
+    if (PC.Settings == None)
+        return "";
+
+    if (RowIndex == 8)
+        return ">";
+
+    if (RowIndex == 6 && PC.PlayerRole != 0)
+        return "";
+
+    switch (RowIndex)
+    {
+        case 0: return PC.Settings.bPauseOnLossFocus ? "[x]" : "[ ]";
+        case 1: return (PC.PlayerInput != None && PC.PlayerInput.bEnableMouseSmoothing) ? "[x]" : "[ ]";
+        case 2: return PC.Settings.bHidePlayerNames ? "[x]" : "[ ]";
+        case 3: return PC.Settings.bMuteEveryone ? "[x]" : "[ ]";
+        case 4: return PC.Settings.bPushToTalk ? "[x]" : "[ ]";
+        case 5: return PC.Settings.bAutoReconnect
+                    ? ("[x] (" $ int(PC.Settings.ReconnectDelay) $ "s)") : "[ ]";
+        case 6: return "Force Start";
+        case 7: return int(PC.Settings.VoiceProximityNear) $ "/" $ int(PC.Settings.VoiceProximityFar);
+        case 8: return ">";
+        case 9: return "";
+    }
+    return "";
+}
+
+function SettingsMoveSelection(int Delta)
+{
+    local int Max;
+    if (InRebindTab())
+    {
+        Max = NumRebindRows();
+        SettingsHighlightedRow += Delta;
+        if (SettingsHighlightedRow < 100)
+            SettingsHighlightedRow = 100 + Max - 1;
+        if (SettingsHighlightedRow >= 100 + Max)
+            SettingsHighlightedRow = 100;
+    }
+    else
+    {
+        SettingsHighlightedRow += Delta;
+        if (SettingsHighlightedRow < 0)
+            SettingsHighlightedRow = NumSettingsRows() - 1;
+        if (SettingsHighlightedRow >= NumSettingsRows())
+            SettingsHighlightedRow = 0;
+    }
+}
+
+// Left/Right adjusts the currently highlighted row. Direction lets the reconnect
+// delay step both ways; toggles simply flip.
+function SettingsMenuClick(OLTogetherController PC)
+{
+    if (HoveredSettingsRow == -2 && InRebindTab())
+    {
+        SettingsHighlightedRow = 8;
+        SettingsAdjust(PC, 0);
+        return;
+    }
+
+    if (HoveredSettingsRow >= 0)
+        SettingsHighlightedRow = HoveredSettingsRow;
+
+    if (SettingsHighlightedRow >= 100 && !bRebindListening)
+    {
+        bRebindListening = true;
+        RebindSlotIndex = SettingsHighlightedRow - 100;
+        return;
+    }
+
+    SettingsAdjust(PC, 0);
+}
+
+function SettingsAdjust(OLTogetherController PC, int Direction)
+{
+    if (PC.Settings == None)
+        return;
+
+    if (SettingsHighlightedRow >= 100)
+    {
+        if (!bRebindListening)
+        {
+            bRebindListening = true;
+            RebindSlotIndex = SettingsHighlightedRow - 100;
+        }
+        return;
+    }
+
+    if (SettingsHighlightedRow == 8)
+    {
+        SettingsHighlightedRow = 100;
+        SettingsTabTarget = 1.0;
+        SettingsTabTransitionVariant = Rand(NUM_SETTINGS_ANIMS);
+        HoveredSettingsRow = -1;
+        return;
+    }
+    if (SettingsHighlightedRow == 9)
+    {
+        CloseSettingsMenu();
+        return;
+    }
+
+    switch (SettingsHighlightedRow)
+    {
+        case 0:
+            PC.Settings.bPauseOnLossFocus = !PC.Settings.bPauseOnLossFocus;
+            PC.ConsoleCommand("set Engine.GameViewportClient bPauseOnLossOfFocus " $ (PC.Settings.bPauseOnLossFocus ? "True" : "False"));
+            break;
+        case 1:
+            if (PC.PlayerInput != None)
+            {
+                PC.PlayerInput.bEnableMouseSmoothing = !PC.PlayerInput.bEnableMouseSmoothing;
+                PC.PlayerInput.SaveConfig();
+            }
+            break;
+        case 2: PC.Settings.bHidePlayerNames = !PC.Settings.bHidePlayerNames; break;
+        case 3: PC.Settings.bMuteEveryone = !PC.Settings.bMuteEveryone; break;
+        case 4:
+            PC.Settings.bPushToTalk = !PC.Settings.bPushToTalk;
+            if (PC.Settings.bPushToTalk)
+                PC.bMicTransmitting = false;
+            else
+                PC.bMicTransmitting = true;
+            break;
+        case 5:
+            if (Direction == 0)
+                PC.Settings.bAutoReconnect = !PC.Settings.bAutoReconnect;
+            else
+            {
+                PC.Settings.ReconnectDelay = FClamp(PC.Settings.ReconnectDelay + Direction * 1.0, 1.0, 60.0);
+                PC.Settings.bAutoReconnect = true;
+            }
+            break;
+        case 6: PC.ForceStartSpeedrun(); break;
+        case 7:
+            if (Direction != 0)
+            {
+                PC.Settings.VoiceProximityNear = FClamp(PC.Settings.VoiceProximityNear + Direction * 100.0, 200.0, 2000.0);
+                PC.Settings.VoiceProximityFar = FClamp(PC.Settings.VoiceProximityFar + Direction * 200.0, 500.0, 5000.0);
+            }
+            break;
+        default:
+            break;
+    }
+
+    PC.Settings.SaveConfig();
+    PC.ApplySettings();
+}
+
+// Returns a per-frame (alpha, offsetX, offsetY, scale) tuple describing the
+// active open/close animation. 16 distinct styles keep the menu feeling fresh.
+function GetSettingsOpenAnimState(out float OutAlpha, out float OutOffX, out float OutOffY, out float OutScale)
+{
+    local float T, E, Inv;
+
+    T = FClamp(SettingsOpenAnim, 0.0, 1.0);
+    // Smoothstep easing for a soft settle.
+    E = T * T * (3.0 - 2.0 * T);
+    Inv = 1.0 - E;
+
+    OutAlpha = E;
+    OutOffX = 0.0;
+    OutOffY = 0.0;
+    OutScale = 1.0;
+
+    switch (SettingsOpenAnimVariant)
+    {
+        case 0:  OutOffY = Inv * -80.0 * UIScale; break;                 // slide from top
+        case 1:  OutOffY = Inv *  80.0 * UIScale; break;                 // slide from bottom
+        case 2:  OutOffX = Inv * -120.0 * UIScale; break;                // slide from left
+        case 3:  OutOffX = Inv *  120.0 * UIScale; break;                // slide from right
+        case 4:  OutScale = 0.6 + 0.4 * E; break;                        // zoom in
+        case 5:  OutScale = 1.4 - 0.4 * E; break;                        // zoom out
+        case 6:  OutOffX = Inv * -120.0 * UIScale; OutOffY = Inv * -80.0 * UIScale; break; // diagonal TL
+        case 7:  OutOffX = Inv *  120.0 * UIScale; OutOffY = Inv *  80.0 * UIScale; break; // diagonal BR
+        case 8:  OutScale = 0.5 + 0.5 * E; OutOffY = Inv * 40.0 * UIScale; break;          // rise + zoom
+        case 9:  OutOffY = Inv * -140.0 * UIScale; OutScale = 0.85 + 0.15 * E; break;      // drop + settle
+        case 10: OutAlpha = E * E; break;                                // slow fade
+        case 11: OutAlpha = 1.0 - Inv * Inv; break;                      // fast fade
+        case 12: OutScale = 0.9 + 0.1 * Sin(E * 3.1415927); OutAlpha = E; break; // gentle pulse
+        case 13: OutOffX = Inv * Sin(T * 18.0) * 30.0 * UIScale; break;  // shake in
+        case 14: OutOffY = Inv * 100.0 * UIScale; OutScale = 1.15 - 0.15 * E; break;       // overshoot up
+        case 15: OutScale = 0.3 + 0.7 * E; OutAlpha = E; break;          // strong zoom
+        default: break;
+    }
+}
+
+function UpdateSettingsOpenAnimation(float Delta)
+{
+    local float Rate;
+    Rate = 9.0;
+    SettingsOpenAnim += (SettingsOpenTarget - SettingsOpenAnim) * FMin(1.0, Delta * Rate);
+    SettingsOpenAnim = FClamp(SettingsOpenAnim, 0.0, 1.0);
+    SettingsTabAnim += (SettingsTabTarget - SettingsTabAnim) * FMin(1.0, Delta * Rate);
+    SettingsTabAnim = FClamp(SettingsTabAnim, 0.0, 1.0);
+}
+
+function DrawCursor(float Alpha)
+{
+    local float S;
+    local byte A;
+    S = 12.0 * UIScale;
+    A = byte(220.0 * Alpha);
+    Canvas.SetPos(MouseX - S * 0.5, MouseY - S * 0.5);
+    Canvas.SetDrawColor(220, 222, 230, A);
+    Canvas.DrawRect(S, S);
+    Canvas.SetPos(MouseX - 1, MouseY - 1);
+    Canvas.SetDrawColor(30, 32, 36, A);
+    Canvas.DrawRect(2, 2);
+}
+
+// Returns chat panel animation offsets based on variant (0-7 different styles)
+function GetChatAnimOffsets(out float OutOffX, out float OutOffY, out float OutScale)
+{
+    local float T, Inv;
+    T = FClamp(ChatVisibilityAlpha, 0.0, 1.0);
+    Inv = 1.0 - T;
+
+    OutOffX = 0.0;
+    OutOffY = 0.0;
+    OutScale = 1.0;
+
+    switch (ChatAnimVariant)
+    {
+        case 0: OutOffX = Inv * -30.0 * UIScale; OutOffY = Inv * 20.0 * UIScale; break; // slide from left-top
+        case 1: OutOffY = Inv * 40.0 * UIScale; break; // slide up from bottom
+        case 2: OutScale = 0.8 + 0.2 * T; break; // quick zoom in
+        case 3: OutOffX = Inv * 20.0 * UIScale; break; // slide from right
+        case 4: OutScale = 1.0 + Inv * 0.1; OutOffY = Inv * 10.0 * UIScale; break; // overshoot
+        case 5: OutOffY = Inv * -20.0 * UIScale; OutScale = 0.9 + 0.1 * Sin(T * 3.14159); break; // bounce
+        case 6: OutScale = 0.5 + 0.5 * T; break; // slow fade + scale up
+        case 7: OutOffY = Inv * 60.0 * UIScale; OutScale = 1.1 - 0.1 * T; break; // drop + settle
+        default: break;
+    }
+}
+
+function DrawSettingsMenu(OLTogetherController PC)
+{
+    local float A, OffX, OffY, Sc;
+    local float PanelW, PanelH, PanelX, PanelY, Pad, RowH, HeaderH;
+    local float CX, CY, TitleScale, RowScale, ValScale;
+    local int I, Rows;
+    local string Val;
+    local byte BaseA;
+    local OLTogetherInput Input;
+
+    if (SettingsOpenAnim <= 0.01 && !bSettingsOpen)
+        return;
+
+    if (bRebindListening && RebindSlotIndex < 0)
+        bRebindListening = false;
+
+    HoveredSettingsRow = -1;
+
+    GetSettingsOpenAnimState(A, OffX, OffY, Sc);
+    if (A <= 0.01)
+        return;
+
+    Rows = NumSettingsRows();
+    if (InRebindTab())
+        Rows = NumRebindRows();
+
+    TitleScale = 1.05 * UIScale * Sc;
+    RowScale = 0.85 * UIScale * Sc;
+    ValScale = 0.85 * UIScale * Sc;
+    Pad = 18.0 * UIScale * Sc;
+    RowH = MeasureH("Ag", RowScale) + 14.0 * UIScale * Sc;
+    HeaderH = MeasureH("Ag", TitleScale) + 20.0 * UIScale * Sc;
+
+    PanelW = FClamp(ViewW() * 0.34, 360.0 * UIScale, 620.0 * UIScale) * Sc;
+    PanelH = HeaderH + RowH * Rows + Pad * 2.0;
+
+    PanelX = (ViewW() - PanelW) * 0.5 + OffX;
+    PanelY = (ViewH() - PanelH) * 0.5 + OffY;
+
+    // Sync mouse position from input
+    Input = OLTogetherInput(PC.PlayerInput);
+    if (Input != None)
+    {
+        MouseX = Input.MousePosition.X;
+        MouseY = Input.MousePosition.Y;
+    }
+
+    // Dim the world behind the menu.
+    DrawFilledBox(0, 0, ViewW(), ViewH(), 0, 0, 0, byte(150.0 * A));
+
+    DrawPanel(PanelX, PanelY, PanelW, PanelH, A);
+
+    CX = PanelX + Pad;
+    CY = PanelY + Pad;
+
+    DrawLabel("Multiplayer Settings", CX, CY, TitleScale, 232, 210, 188, byte(255.0 * A));
+
+    if (InRebindTab())
+    {
+        DrawLabel(" < Back (Esc)", PanelX + PanelW - Pad - MeasureW(" < Back (Esc)", RowScale), CY, RowScale, 160, 200, 240, byte(255.0 * A));
+        if (MouseY >= CY - 3.0 * UIScale && MouseY < CY + RowH && MouseX >= PanelX + PanelW - Pad - MeasureW(" < Back (Esc)", RowScale) && MouseX < PanelX + PanelW - Pad * 0.5)
+            HoveredSettingsRow = -2;
+    }
+    CY += HeaderH;
+
+    if (InRebindTab())
+    {
+        for (I = 0; I < Rows; I++)
+        {
+            BaseA = byte(255.0 * A);
+            if (MouseY >= CY - 3.0 * UIScale && MouseY < CY + RowH - 3.0 * UIScale &&
+                MouseX >= PanelX + Pad * 0.5 && MouseX < PanelX + PanelW - Pad * 0.5)
+            {
+                HoveredSettingsRow = 100 + I;
+                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
+                              70, 120, 90, byte(140.0 * A));
+            }
+            else if (SettingsHighlightedRow == 100 + I)
+            {
+                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
+                              70, 90, 120, byte(120.0 * A));
+            }
+
+            DrawLabel(RebindRowLabel(I), CX, CY, RowScale, byte(230), byte(232), byte(240), BaseA);
+            Val = RebindRowValue(PC, I);
+            DrawLabel(Val, PanelX + PanelW - Pad - MeasureW(Val, ValScale), CY, ValScale, 200, 220, 200, BaseA);
+            CY += RowH;
+        }
+    }
+    else
+    {
+        for (I = 0; I < Rows; I++)
+        {
+            BaseA = byte(255.0 * A);
+            if (MouseY >= CY - 3.0 * UIScale && MouseY < CY + RowH - 3.0 * UIScale &&
+                MouseX >= PanelX + Pad * 0.5 && MouseX < PanelX + PanelW - Pad * 0.5)
+            {
+                HoveredSettingsRow = I;
+                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
+                              70, 120, 90, byte(140.0 * A));
+            }
+            else if (I == SettingsHighlightedRow)
+            {
+                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
+                              70, 90, 120, byte(120.0 * A));
+            }
+
+            DrawLabel(SettingsRowLabel(I), CX, CY, RowScale,
+                      byte(230), byte(232), byte(240), BaseA);
+
+            Val = SettingsRowValue(PC, I);
+            if (Val != "")
+                DrawLabel(Val, PanelX + PanelW - Pad - MeasureW(Val, ValScale), CY, ValScale,
+                          200, 220, 200, BaseA);
+
+            CY += RowH;
+        }
+    }
+
+    // Draw custom cursor
+    DrawCursor(A);
 }
 
 event PostRender()
@@ -480,6 +1158,7 @@ event PostRender()
         return;
 
     UIScale = FClamp(ViewH() / REF_HEIGHT, 0.75, 2.5);
+    Canvas.Font = class'Engine'.Static.GetLargeFont();
 
     Delta = WorldInfo.TimeSeconds - LastChatLineTime;
     if (Delta < 0.0 || Delta > 0.5)
@@ -487,21 +1166,31 @@ event PostRender()
     LastChatLineTime = WorldInfo.TimeSeconds;
 
     UpdateChatAnimation(PC, Delta);
+    UpdateSettingsOpenAnimation(Delta);
+
+    if (IsAtMainMenuScreen())
+        DrawMainMenuInfo(PC);
 
     DrawNotificationsPanel();
-    DrawNameTag(PC);
+    if (PC.Settings == None || !PC.Settings.bHidePlayerNames)
+        DrawNameTag(PC);
     DrawChatPanel(PC);
+    DrawSpeedrunHUD(PC);
+    DrawSettingsMenu(PC);
 }
 
 DefaultProperties
 {
     MaxChatHistory=200
-    ChatScrollOffset=0
+    ChatScrollIndex=0
     UIScale=1.0
-    ChatVisibleAlpha=1.0
-    PanelOpenAnim=0.0
+    ChatVisibilityAlpha=1.0
+    ChatPanelOpenAnim=0.0
     ChatIdleFadeDelay=8.0
     ChatFadeDuration=1.5
     NameFadeStartDist=800.0
     NameFadeEndDist=2500.0
+    NameNearFadeStart=220.0
+    NameNearFadeEnd=90.0
+    ModVersion="1.0"
 }
