@@ -1,35 +1,20 @@
-How to run:
-- Configure a server_config.json based on the example manually, or use the GUI to configure it (optional for the headless as the server will use sensible defaults should no server config exist. but I recommend checking if port 7777 isn't already used on your computer, then changing the port in the config if need be)
-- Compile the mod, then open 2 instances of Outlast with the Multiplayer.u file loaded
-- Run server.py directly or use the example docker compose
-- if you use the docker compose remember to change the port made available in the compose to what you set in the config
-- Load into the same checkpoint.
+The main repository for the unofficial Outlast Multiplayer Mod.
+W/ Superboo07.
+<img width="1177" height="899" alt="image" src="https://github.com/user-attachments/assets/352fd538-4b4c-46f6-bb8f-41c302b6c478" />
 
-for the sake of additional documention, below are the same example server_config and docker compose files.
+Features:
+- Chat Box
+- Proximity Voice Chat
+- Better GUI
+- Better Room Creaton/Joining
+- Stability.
+- ... More
 
-docker-compose.yml example
-```
-services:
-  oltogether:
-    build: 
-      context: .
-      dockerfile: dockerfile
-    container_name: oltogether-server
-    restart: unless-stopped
-    volumes:
-      - ./server_config.json:/app/server_config.json:ro # comment this and the above line out of you do not configure a server_config.json file. 
-    ports:
-      - "7777:7777"
-    command: ["python3", "server.py", "--headless"]
-```
+How to use:
+- Drag all the files into the Outlast root folder.
+- Run OutlastTogetherLauncher.
+- Set your game path to the main Outlast Root Folder.
+- Configure your room and press "HOST ROOM" and Launch Game.
 
-server_config.json example
-```
-{
-  "game_path": "<replace with the path to the binary of literally any officially purchased copy of Outlast 1>",
-  "player_name": "Meina2",
-  "host": "127.0.0.1",
-  "port": "7777",
-  "server_name": "Meina's Server"
-}
-```
+For Join:
+- Refresh until you see a room you want to join, select it and press Join.
