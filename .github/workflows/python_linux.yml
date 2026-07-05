@@ -27,7 +27,7 @@ jobs:
           wine \
           cage \
           xwayland-run
-          wine reg add "HKCU\Software\Wine\Drivers" /v Graphics /t REG_SZ /d "wayland" /f
+          WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka wine reg add "HKCU\Software\Wine\Drivers" /v Graphics /t REG_SZ /d "wayland" /f
 
       - name: Build project
         run: |
