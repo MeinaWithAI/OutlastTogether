@@ -21,6 +21,7 @@ unzip
 
 mkdir -p $WINEPREFIX
 mkdir -p $WINEPREFIX/prefix/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
+mkdir -p "$HOME/.cache"
 
 # Download choco & depends
 wget -O $HOME/.cache/Chocolatey-for-wine.7z \
