@@ -14,7 +14,7 @@ jobs:
       - name: Install base dependencies
         run: |
           pacman -Syu --noconfirm archlinux-keyring
-          pacman -Syu --noconfirm base-devel sudo git clang lld make cmake extra-cmake-modules python wine msitools ca-certificates libwbclient wget
+          pacman -Syu --noconfirm base-devel sudo git clang lld make cmake extra-cmake-modules python wine msitools ca-certificates libwbclient wget xorg-server-xvfb
 
       - name: Create build user
         run: |
@@ -36,17 +36,17 @@ jobs:
           mkdir -p $HOME/.cache
 
           wget -O $HOME/.cache/python-3.12.10.exe https://www.python.org/ftp/python/3.12.10/python-3.12.10.exe
-          wine $HOME/.cache/python-3.12.10.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
+          xvfb-run wine $HOME/.cache/python-3.12.10.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
 
-          wine pip install nuitka --break-system-packages
-          wine python -m pip install --no-python-version-warning --disable-pip-version-check -r requirements.txt
+          xvfb-run wine pip install nuitka --break-system-packages
+          xvfb-run wine python -m pip install --no-python-version-warning --disable-pip-version-check -r requirements.txt
 
           # These are only needed when compiling x86_64 as the dependencywalker that nuitka downloads for that version doesn't run with wine
           # mkdir -p $WINEPREFIX/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
           # wget -O $HOME/.cache/depends22_x86.zip https://dependencywalker.com/depends22_x86.zip
           # unzip $HOME/.cache/depends22_x86.zip -d $WINEPREFIX/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
 
-          wine python -m nuitka \
+          xvfb-run wine python -m nuitka \
           --mingw \
           --assume-yes-for-downloads \
           --enable-plugin=tk-inter \
