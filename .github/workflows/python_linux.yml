@@ -15,6 +15,16 @@ jobs:
         run: |
           set -eux
           sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y \
+          python3 \
+          winetricks \
+          wget \
+          curl \
+          libwbclient0 \
+          unzip \
+          7zip
+
           mkdir -pm755 /etc/apt/keyrings && \
           curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
             -o /etc/apt/keyrings/winehq-archive.key && \
@@ -23,14 +33,6 @@ jobs:
           apt-get update && \
           apt-get install -y --install-recommends winehq-devel
           wine --version
-          sudo apt-get update
-          sudo apt-get install -y \
-          python3 \
-          winetricks \
-          wget \
-          libwbclient0 \
-          unzip \
-          7zip
 
 
       - name: Build project
