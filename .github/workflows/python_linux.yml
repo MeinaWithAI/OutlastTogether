@@ -4,7 +4,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  container:
+  build:
+    runs-on: ubuntu-latest
+
+    container:
       image: archlinux:latest
 
     steps:
@@ -14,9 +17,8 @@ jobs:
       - name: Install dependencies
         run: |
           set -eux
-          sudo pacman -Sy --noconfirm \
+          pacman -Sy --noconfirm \
             python \
-            wine \
             winetricks \
             wget \
             curl \
@@ -27,7 +29,6 @@ jobs:
 
           export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
           mkdir -p "$WINEPREFIX"
-          wine --version
 
       - name: Build project
         run: |
