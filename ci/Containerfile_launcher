@@ -20,7 +20,7 @@ ENV WLR_RENDERER=pixman
 RUN dpkg --add-architecture i386 && \
     apt-get update && apt-get install -y \
         sudo curl wget gnupg2 ca-certificates tar xz-utils unzip \
-        cage xwayland-run wtype \
+        cage xwayland-run \
         winbind lib32gcc-s1 lib32stdc++6 libc6-i386 \
     && rm -rf /var/lib/apt/lists/*
 

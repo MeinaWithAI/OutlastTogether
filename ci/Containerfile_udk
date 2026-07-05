@@ -1,13 +1,5 @@
 FROM ubuntu:24.04
 
-# Warning nuitka x86 doesn't have this issue but if you're using the
-# x64 version the depends.exe will give an error like mfc42.dll failed to import.
-# and it's not fixable by running winetricks -q mfc42
-# If you gotta compile for x64 you gotta put the working depends to the cache folder by doing
-# mkdir -p $WINEPREFIX/prefix/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
-# wget -O /build/depends22_x86.zip https://dependencywalker.com/depends22_x86.zip
-# unzip /build/depends22_x86.zip -d /build/wine/prefix/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
-
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PROTON_ENABLE_WAYLAND=1
 ENV WINEPREFIX=/build/wine/prefix
@@ -20,7 +12,7 @@ ENV WLR_RENDERER=pixman
 RUN dpkg --add-architecture i386 && \
     apt-get update && apt-get install -y \
         sudo curl wget gnupg2 ca-certificates tar xz-utils unzip \
-        cage xwayland-run wtype \
+        cage xwayland-run \
         winbind lib32gcc-s1 lib32stdc++6 libc6-i386 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,6 +39,7 @@ RUN mkdir -p $WINEPREFIX $XDG_RUNTIME_DIR && \
     wineserver -w; \
     echo "PREFIX READY"
 
+## edit after here
 # ---- Install Python + deps under cage (Wine uses Wayland driver) ----
 RUN wget -q https://www.python.org/ftp/python/3.12.9/python-3.12.9.exe && \
     wlheadless-run -c cage -- \
