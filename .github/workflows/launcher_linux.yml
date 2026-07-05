@@ -1,0 +1,26 @@
+name: Build Launcher (Linux)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build container image
+        run: podman build -t outlast-launcher -f ci/Containerfile_launcher .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: Launcher
+          path: out/build/dist/

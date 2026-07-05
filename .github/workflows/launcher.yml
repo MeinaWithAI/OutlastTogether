@@ -1,4 +1,4 @@
-name: Build Python
+name: Build Launcher
 
 on:
   workflow_dispatch
@@ -16,10 +16,10 @@ jobs:
         run: |
           choco install -y mingw python312
           pip install nuitka --break-system-packages
-          python -m nuitka --mingw64 --enable-plugin=tk-inter --onefile OutlastTogether.py
+          .\build.bat
 
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
-          name: OutlastTogether
+          name: Launcher
           path: OutlastTogether.exe

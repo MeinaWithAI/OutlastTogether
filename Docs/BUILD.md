@@ -9,8 +9,11 @@ python -m nuitka --mingw64 --enable-plugin=tk-inter --onefile OutlastTogether.py
 ```
 
 ### Linux (cross-compile to windows) (It's not recommended to use the linux version of outlast)
+
+Provided as a containerfile for ci, though it'll compile fine if you just use the necessary commands from it.
+
 ```
-./Cross_compile.sh
+podman build -t outlast -f ci/Containerfile_launcher .
 ```
 
 # Unreal script
