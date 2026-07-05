@@ -27,6 +27,7 @@ jobs:
 
           export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
           mkdir -p "$WINEPREFIX"
+          wine --version
 
       - name: Build project
         run: |
