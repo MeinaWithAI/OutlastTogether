@@ -33,9 +33,9 @@ jobs:
           set -e
           export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
           export WINDOWS_SDK_PATH="$HOME/my_msvc/opt/msvc"
+          mkdir -p $WINEPREFIX
           mkdir -p $WINDOWS_SDK_PATH
           export WINE=$(command -v wine64 || command -v wine || false)
-          mkdir -p $WINEPREFIX
           $WINE wineboot
           git clone https://github.com/mstorsjo/msvc-wine
           ./msvc-wine/vsdownload.py --accept-license --dest $WINDOWS_SDK_PATH
