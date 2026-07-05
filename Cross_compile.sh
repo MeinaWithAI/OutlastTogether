@@ -5,7 +5,8 @@
 
 export WINEPATH=python
 export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
-export WINEDEBUG=trace-all,warn-all,err+all,fixme-all
+export WINEDEBUG=fixme-all
+export WINEDLLOVERRIDES="winemenubuilder.exe=d"
 
 echo "Make sure to have the following packages installed;
 python

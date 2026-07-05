@@ -25,16 +25,14 @@ jobs:
           unzip \
           7zip \
           wine \
-          cage \
-          xwayland-run
+          xvfb
           export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
           mkdir -p $WINEPREFIX
-          wine reg add "HKCU\Software\Wine\Drivers" /v Graphics /t REG_SZ /d "wayland" /f
 
       - name: Build project
         run: |
           chmod +x Cross_compile.sh
-          wlheadless-run -c cage -- ./Cross_compile.sh
+          xvfb-run ./Cross_compile.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
