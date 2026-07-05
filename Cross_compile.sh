@@ -35,6 +35,7 @@ unzip $HOME/.cache/depends22_x86.zip -d $WINEPREFIX/prefix/drive_c/users/$USER/A
 
 ls -l "$HOME/.cache/Chocolatey-for-wine"
 wine $HOME/.cache/Chocolatey-for-wine/ChoCinstaller_*.exe
+echo FINISH
 wine choco install -y mingw python312
 
 wine pip install nuitka --break-system-packages
