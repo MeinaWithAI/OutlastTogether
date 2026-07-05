@@ -25,7 +25,7 @@ RUN mkdir -pm755 /etc/apt/keyrings && \
     curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
         -o /etc/apt/sources.list.d/winehq-noble.sources && \
     apt-get update && \
-    apt-get install -y --install-recommends winehq-devel wine-mono && \
+    apt-get install -y --install-recommends winehq-devel && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -46,6 +46,10 @@ RUN git clone https://github.com/superboo07/Outlast-Level-Editor /build/Outlast-
 RUN mkdir -p $WINEPREFIX $XDG_RUNTIME_DIR && \
     wineboot -u 2>/dev/null; \
     wineserver -w; \
+    wget -q https://dl.winehq.org/wine/wine-mono/11.2.0/wine-mono-11.2.0-x86.msi && \
+    wine msiexec /i wine-mono-11.2.0-x86.msi 2>/dev/null; \
+    wineserver -w; \
+    rm -f wine-mono-11.2.0-x86.msi; \
     wine reg add "HKEY_CURRENT_USER\\Software\\Wine\\Drivers" \
         /v Graphics /t REG_SZ /d wayland /f 2>/dev/null; \
     wineserver -w; \
