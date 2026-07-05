@@ -20,12 +20,13 @@ jobs:
           pacman -Sy --noconfirm \
             python \
             wine \
+            wine-mono \
+            wine-gecko \
             winetricks \
             wget \
             curl \
             unzip \
-            p7zip \
-            xorg-server-xvfb
+            p7zip
 
       - name: Build project
         run: |
