@@ -17,7 +17,7 @@ Provided as a containerfile for ci, though it'll compile fine if you just use th
 podman build -t outlast-launcher -f ci/Containerfile_launcher .
 ```
 
-# Unreal script
+# UnrealScript
 
 ## Prerequisites
 - A copy of Outlast
@@ -26,13 +26,13 @@ podman build -t outlast-launcher -f ci/Containerfile_launcher .
 ### Windows
 
 ```
-Compile.bat
+build_unrealscript.bat
 ```
 
 ### Linux
 
 ```
-podman build -t outlast-udk -f ci/Containerfile_udk .
+podman build -t outlast-unrealscript -f ci/Containerfile_unrealscript .
 ```
 
 Output should be at `%UDK%\UDKGame\Script\Multiplayer.u`

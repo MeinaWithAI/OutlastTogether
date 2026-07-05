@@ -1,10 +1,10 @@
 name: Build Launcher
 
 on:
-  workflow_dispatch
+  workflow_dispatch:
 
 jobs:
-  checks:
+  build:
     runs-on: windows-latest
 
     steps:
@@ -22,4 +22,4 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: Launcher
-          path: OutlastTogether.exe
+          path: OutlastLauncher.exe
