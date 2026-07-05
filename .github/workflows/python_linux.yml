@@ -26,7 +26,7 @@ jobs:
           7zip \
           wine \
           cage \
-          xwayland-run \
+          xwayland-run
           wine reg add "HKCU\Software\Wine\Drivers" /v Graphics /t REG_SZ /d "wayland" /f
 
       - name: Build project
