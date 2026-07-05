@@ -19,21 +19,18 @@ jobs:
           set -eux
           pacman -Sy --noconfirm \
             python \
+            wine \
             winetricks \
             wget \
             curl \
             unzip \
             p7zip \
-            wine \
             xorg-server-xvfb
-
-          export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
-          mkdir -p "$WINEPREFIX"
 
       - name: Build project
         run: |
           chmod +x Cross_compile.sh
-          xvfb-run ./Cross_compile.sh
+          ./Cross_compile.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
