@@ -11,31 +11,60 @@ jobs:
       image: archlinux:latest
 
     steps:
-      - name: Checkout Repository
+      - name: Install base dependencies
+        run: |
+          pacman -Syu --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm base-devel sudo git clang lld make cmake extra-cmake-modules python wine msitools ca-certificates libwbclient wget
+
+      - name: Create build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+      - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Install dependencies
-        run: |
-          set -eux
-          pacman -Sy --noconfirm \
-            python \
-            wine \
-            wine-mono \
-            wine-gecko \
-            winetricks \
-            wget \
-            curl \
-            unzip \
-            p7zip
+      - name: Fix permissions
+        run: chown -R builder:builder .
 
-      - name: Build project
+      - name: Build
         run: |
-          chmod +x Cross_compile.sh
-          ./Cross_compile.sh
+          sudo -u builder sh <<'EOF'
+          set -e
+          export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
+          export WINDOWS_SDK_PATH="$HOME/my_msvc/opt/msvc"
+          mkdir -p $WINDOWS_SDK_PATH
+          export WINE=$(command -v wine64 || command -v wine || false)
+          mkdir -p $WINEPREFIX
+          $WINE wineboot
+          git clone https://github.com/mstorsjo/msvc-wine
+          ./msvc-wine/vsdownload.py --accept-license --dest $WINDOWS_SDK_PATH
+          ./msvc-wine/install.sh $WINDOWS_SDK_PATH
 
-      - name: Upload artifacts
+          export PATH=$WINDOWS_SDK_PATH/bin/x64:$PATH
+
+          wget https://www.python.org/ftp/python/3.13.7/python-3.13.7-amd64.exe
+          wine python-3.13.7-amd64.exe /quiet InstallAllUsers=1 PrependPath=1 Include_test=0
+
+          wine pip install nuitka --break-system-packages
+          wine python -m pip install --no-python-version-warning --disable-pip-version-check -r requirements.txt
+
+          mkdir -p $HOME/.cache
+          wget -O $HOME/.cache/depends22_x86.zip https://dependencywalker.com/depends22_x86.zip
+          unzip $HOME/.cache/depends22_x86.zip -d $WINEPREFIX/prefix/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
+
+          wine python -m nuitka \
+          --msvc=latest \
+          --enable-plugin=tk-inter \
+          --onefile \
+          OutlastTogether.py \
+          --output-filename=OutlastLauncher.exe
+          
+          EOF
+
+      - name: Upload artifact/s
         uses: actions/upload-artifact@v6
         with:
-          name: OutlastTogether
+          name: DLL
           path: |
             OutlastTogether.exe
