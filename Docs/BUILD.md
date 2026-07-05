@@ -2,7 +2,7 @@
 
 ### Windows
 ```
-choco install -y mingw python312
+choco install -y python312
 pip install --no-python-version-warning --disable-pip-version-check nuitka zstandard ordered-set -r requirements.txt
 build_launcher.bat
 ```

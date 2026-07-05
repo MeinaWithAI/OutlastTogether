@@ -20,7 +20,8 @@ jobs:
         run: podman build -t outlast-unrealscript -f ci/Containerfile_unrealscript .
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: Launcher
           path: Multiplayer.u
+          archive: false
