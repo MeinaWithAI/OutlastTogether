@@ -15,17 +15,23 @@ jobs:
         run: |
           set -eux
           sudo dpkg --add-architecture i386
+          mkdir -pm755 /etc/apt/keyrings && \
+          curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
+            -o /etc/apt/keyrings/winehq-archive.key && \
+          curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
+              -o /etc/apt/sources.list.d/winehq-noble.sources && \
+          apt-get update && \
+          apt-get install -y --install-recommends winehq-devel
+          wine --version
           sudo apt-get update
           sudo apt-get install -y \
           python3 \
-          wine \
-          wine32:i386 \
-          wine64 \
           winetricks \
           wget \
           libwbclient0 \
           unzip \
           7zip
+
 
       - name: Build project
         run: |
