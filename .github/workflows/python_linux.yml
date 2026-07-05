@@ -24,13 +24,15 @@ jobs:
           libwbclient0 \
           unzip \
           7zip \
-          wine
-          wine --version
+          wine \
+          cage \
+          xwayland-run \
+          wine reg add "HKCU\Software\Wine\Drivers" /v Graphics /t REG_SZ /d "wayland" /f
 
       - name: Build project
         run: |
           chmod +x Cross_compile.sh
-          ./Cross_compile.sh
+          wlheadless-run -c cage -- ./Cross_compile.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
