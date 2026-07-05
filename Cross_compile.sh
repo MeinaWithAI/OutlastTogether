@@ -3,7 +3,7 @@
 # This script generates cross compiles python with nuitka
 # Based on https://github.com/Nuitka/Nuitka/issues/43
 
-export WINEPATH=python
+#export WINEPATH=python
 export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
 export WINEDEBUG=fixme-all
 export WINEDLLOVERRIDES="winemenubuilder.exe=d"
@@ -36,7 +36,7 @@ unzip $HOME/.cache/depends22_x86.zip -d $WINEPREFIX/prefix/drive_c/users/$USER/A
 ls -l "$HOME/.cache/Chocolatey-for-wine"
 wine $HOME/.cache/Chocolatey-for-wine/ChoCinstaller_*.exe
 echo FINISH
-wine choco install -y mingw python312
+wine cmd /c choco install -y mingw python312
 
 wine pip install nuitka --break-system-packages
 wine python -m pip install --no-python-version-warning --disable-pip-version-check -r requirements.txt
