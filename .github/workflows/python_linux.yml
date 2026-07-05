@@ -51,7 +51,7 @@ jobs:
 
           mkdir -p $HOME/.cache
           wget -O $HOME/.cache/depends22_x86.zip https://dependencywalker.com/depends22_x86.zip
-          unzip $HOME/.cache/depends22_x86.zip -d $WINEPREFIX/prefix/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
+          unzip $HOME/.cache/depends22_x86.zip -d $WINEPREFIX/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
 
           wine python -m nuitka \
           --msvc=latest \
