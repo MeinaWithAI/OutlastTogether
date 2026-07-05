@@ -3,9 +3,9 @@
 # This script generates cross compiles python with nuitka
 # Based on https://github.com/Nuitka/Nuitka/issues/43
 
-WINEPATH=python
-WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
-WINEDEBUG=trace-all,warn-all,err+all,fixme-all
+export WINEPATH=python
+export WINEPREFIX=$HOME/.local/share/wineprefixes/nuitka
+export WINEDEBUG=trace-all,warn-all,err+all,fixme-all
 
 echo "Make sure to have the following packages installed;
 python
@@ -29,9 +29,10 @@ https://github.com/PietJankbal/Chocolatey-for-wine/releases/latest/download/Choc
 wget -O $HOME/.cache/depends22_x86.zip https://dependencywalker.com/depends22_x86.zip
 
 # Extract
-7z x $HOME/.cache/Chocolatey-for-wine.7z -o$HOME/.cache/Chocolatey-for-wine
+7z x $HOME/.cache/Chocolatey-for-wine.7z -o$HOME/.cache
 unzip $HOME/.cache/depends22_x86.zip -d $WINEPREFIX/prefix/drive_c/users/$USER/AppData/Local/Nuitka/Nuitka/Cache/downloads/depends/x86_64
 
+ls -l "$HOME/.cache/Chocolatey-for-wine"
 wine $HOME/.cache/Chocolatey-for-wine/ChoCinstaller_*.exe
 wine choco install -y mingw python312
 
