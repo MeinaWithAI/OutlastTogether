@@ -19,6 +19,12 @@ jobs:
       - name: Build container image
         run: podman build -t outlast-unrealscript -f ci/Containerfile_unrealscript .
 
+      - name: Extract binary from image
+        run: |
+          id=$(podman create localhost/outlast-launcher)
+          podman cp "$id":/build/Outlast-Level-Editor/UDKGame/Script/Multiplayer.u ./Multiplayer.u
+          podman rm "$id"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
