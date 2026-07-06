@@ -29,10 +29,20 @@ jobs:
           mkdir -Force C:\Outlast-Level-Editor\Development\Src\Multiplayer
           Copy-Item -Recurse Classes C:\Outlast-Level-Editor\Development\Src\Multiplayer\
 
-      - name: Install .NET Framework 4.0 and DirectX 9
+      - name: Install dependencies
         shell: pwsh
         run: |
           choco install -y dotnet4.0 directx
+
+      - name: Set up virtual display
+        shell: pwsh
+        run: |
+          $driver = "$env:TEMP\VirtualDisplay"
+          mkdir -Force $driver
+          curl -L -o "$driver\IddSampleDriver.zip" "https://github.com/ge9/VirtualDisplay/releases/download/1.1/IddSampleDriver_1.1_x64.zip"
+          Expand-Archive "$driver\IddSampleDriver.zip" -DestinationPath "$driver\IddSampleDriver" -Force
+          & "$driver\IddSampleDriver\installDriver.exe"
+          Start-Sleep 2
 
       - name: Configure DefaultEngine.ini
         shell: pwsh
@@ -48,9 +58,24 @@ jobs:
       - name: Compile UnrealScript
         shell: pwsh
         run: |
-          $proc = Start-Process -FilePath "C:\Outlast-Level-Editor\Binaries\Win32\UDK.com" -ArgumentList "make -log" -Wait -PassThru -NoNewWindow
+          $log = "C:\Outlast-Level-Editor\UDKGame\Logs\Launch.log"
+          $proc = Start-Process -FilePath "C:\Outlast-Level-Editor\Binaries\Win32\UDK.com" `
+            -ArgumentList "make -log" -PassThru -NoNewWindow `
+            -RedirectStandardError "$env:TEMP\udk_stderr.txt"
+          if (-not $proc.WaitForExit(300000)) {
+            $proc.Kill()
+            Write-Host "##[error] UDK timed out after 5 minutes"
+          }
           Write-Host "Exit code: $($proc.ExitCode)"
-          Get-Content "C:\Outlast-Level-Editor\UDKGame\Logs\Launch.log" -Tail 100
+          if (Test-Path $log) {
+            Get-Content $log -Tail 100
+          } else {
+            Write-Host "##[warning] Launch.log not found at $log"
+            Get-ChildItem "C:\Outlast-Level-Editor\UDKGame\Logs\" -Recurse
+          }
+          if (Test-Path "$env:TEMP\udk_stderr.txt") {
+            Get-Content "$env:TEMP\udk_stderr.txt"
+          }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
