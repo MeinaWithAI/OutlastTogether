@@ -5,8 +5,8 @@ echo ------------------------------------------
 echo OLTogether Multiplayer - Compile + Launch
 echo ------------------------------------------
 
-set UDK=C:\UDK\Custom\Binaries\Win32\UDK.com
-set SRC=C:\UDK\UDKGame\Script\Multiplayer.u
+set UDK=C:\Outlast-Level-Editor\Binaries\Win32\UDK.com
+set SRC=C:\Outlast-Level-Editor\UDKGame\Script\Multiplayer.u
 set "GAME_DIR=C:\Program Files (x86)\Steam\steamapps\common\Outlast\OLGame\CookedPCConsole"
 set DST_DIR=%GAME_DIR%\MultiplayerContent
 set DST=%DST_DIR%\Multiplayer.u

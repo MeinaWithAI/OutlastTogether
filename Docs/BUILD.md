@@ -21,7 +21,7 @@ podman build -t outlast-launcher -f ci/Containerfile_launcher .
 
 ## Prerequisites
 - A copy of Outlast
-- [UDK](https://drive.google.com/file/d/1IZed_3QAivpnU2uPlSClFVs-YOZrIpcd/view)
+- [Outlast level editor](https://github.com/superboo07/Outlast-Level-Editor) (Don't forget to setup UDK like it tells you to)
 
 ### Windows
 
