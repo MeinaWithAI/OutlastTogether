@@ -37,12 +37,16 @@ jobs:
       - name: Set up virtual display
         shell: pwsh
         run: |
-          $driver = "$env:TEMP\VirtualDisplay"
+          $driver = "$env:TEMP\IddSampleDriver"
           mkdir -Force $driver
-          curl -L -o "$driver\IddSampleDriver.zip" "https://github.com/ge9/VirtualDisplay/releases/download/1.1/IddSampleDriver_1.1_x64.zip"
-          Expand-Archive "$driver\IddSampleDriver.zip" -DestinationPath "$driver\IddSampleDriver" -Force
-          & "$driver\IddSampleDriver\installDriver.exe"
-          Start-Sleep 2
+          curl -L -o "$driver\IddSampleDriver.zip" "https://github.com/ge9/IddSampleDriver/releases/download/0.0.1.4/IddSampleDriver.zip"
+          Expand-Archive "$driver\IddSampleDriver.zip" -DestinationPath $driver -Force
+          mkdir -Force C:\IddSampleDriver
+          "@`n3" | Out-File -FilePath "C:\IddSampleDriver\option.txt" -Encoding ascii
+          Push-Location $driver
+          & .\installDriver.bat
+          Pop-Location
+          Start-Sleep 5
 
       - name: Configure DefaultEngine.ini
         shell: pwsh
