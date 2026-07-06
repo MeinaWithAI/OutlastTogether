@@ -272,10 +272,18 @@ event PlayerTick(float DeltaTime)
             $ (MyHero != None ? int(MyHero.PreciseHealth) : 100);
         ConnectionLink.SendText(Packet $ "\n");
     }
-    if (VoiceListener != None && VoiceListener.bClientConnected && Pawn != None && WorldInfo.TimeSeconds - LastVoiceControlSendTime > 0.1)
+    if (VoiceListener != None && VoiceListener.bClientConnected && Pawn != None && WorldInfo.TimeSeconds - LastVoiceControlSendTime > 0.05)
     {
         LastVoiceControlSendTime = WorldInfo.TimeSeconds;
-        VoiceListener.SendControl("POS," $ Pawn.Location.X $ "," $ Pawn.Location.Y);
+        // Full 3D position + camera yaw (in degrees) for 3D spatial audio.
+        // UE3 rotator Yaw is in unreal-units (65536 = 360 deg); convert to degrees.
+        VoiceListener.SendControl(
+            "POS,"
+            $ Pawn.Location.X $ ","
+            $ Pawn.Location.Y $ ","
+            $ Pawn.Location.Z $ ","
+            $ (Rotation.Yaw * (360.0 / 65536.0))
+        );
         VoiceListener.SendControl("PTT," $ int(bMicTransmitting));
         if (Settings != None)
             VoiceListener.SendControl("PROX," $ int(Settings.VoiceProximityNear) $ "," $ int(Settings.VoiceProximityFar));
@@ -804,7 +812,10 @@ function OnReceiveData(string Data)
     HP = (F.Length >= 19) ? int(F[18]) : 100;
     LastReceivedLoc = IL;
     LastReceivedVel = IV;
-    LastReceivedRot = IR;
+    if (LM != 3 && LM != 4 && LM != 5 && LM != 6 && LM != 10)
+    {
+        LastReceivedRot = IR;
+    }
     RemoteHealth = HP;
     bHasReceivedData = true;
     if (RemotePawn == None) return;
@@ -892,6 +903,21 @@ function OnReceiveData(string Data)
     {
         PL = LastLocomotionMode;
         LastLocomotionMode = LM;
+        if (LM == 3 || LM == 4)
+        {
+            if (RH.CameraMeshShadowProxy != None)
+                RH.CameraMeshShadowProxy.SetHidden(true);
+            if (RH.ShadowProxyRightArmAnimSlot != None)
+                RH.ShadowProxyRightArmAnimSlot.StopCustomAnim(0.15);
+            if (RH.ShadowProxyLeftArmAnimSlot != None)
+                RH.ShadowProxyLeftArmAnimSlot.StopCustomAnim(0.15);
+        }
+        else if ((PL == 3 || PL == 4) && bLastRemoteCamcorder)
+        {
+            if (RH.CameraMeshShadowProxy != None)
+                RH.CameraMeshShadowProxy.SetHidden(false);
+            PlayCamcorderIdleAnim();
+        }
         switch (LM)
         {
             case 1:
