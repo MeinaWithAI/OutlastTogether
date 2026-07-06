@@ -21,7 +21,7 @@ jobs:
 
       - name: Extract binary from image
         run: |
-          id=$(podman create localhost/outlast-unrealscript)
+          id=$(podman create outlast-unrealscript)
           podman cp "$id":/build/Outlast-Level-Editor/UDKGame/Script/Multiplayer.u ./Multiplayer.u
           podman rm "$id"
 
