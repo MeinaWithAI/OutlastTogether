@@ -18,9 +18,8 @@ On the machine that will host the dedicated server, execute the following comman
 ```sh
 mkdir -p $HOME/Games/outlast
 git clone https://github.com/MeinaWithAI/OutlastTogether $HOME/Games/outlast
-cd $HOME/Games/outlast/Container
+cd $HOME/Games/outlast
 podman build -t outlast -f CI/Containerfile .
-podman build --network=host -t outlast -f CI/Containerfile .
 ```
 
 ### Running the Container
@@ -28,7 +27,14 @@ podman build --network=host -t outlast -f CI/Containerfile .
 Run the container with:
 
 ```sh
-podman run -d --name outlast --network=host -v ./server_config.json:/build/server_config.json:ro localhost/outlast
+podman run -d \
+  --name outlast \
+  -p 7777:7777/tcp \
+  -p 7777:7777/udp \
+  -p 47778:47778/tcp \
+  -p 47778:47778/udp \
+  -v ./server_config.json:/build/server_config.json:ro \
+  localhost/outlast
 ```
 
 For logs:
