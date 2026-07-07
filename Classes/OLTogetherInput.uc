@@ -169,12 +169,16 @@ function bool Key(int ControllerId, name Key, EInputEvent Event, float AmountDep
         {
             switch (Key)
             {
-                case 'Up': case 'W':          Outer.SettingsMenuInput('Up');    return true;
-                case 'Down': case 'S':        Outer.SettingsMenuInput('Down');  return true;
-                case 'Left': case 'A':        Outer.SettingsMenuInput('Left');  return true;
-                case 'Right': case 'D':       Outer.SettingsMenuInput('Right'); return true;
-                case 'Enter': case 'SpaceBar': Outer.SettingsMenuInput('Enter'); return true;
-                case 'Escape': case 'Tilde':  Outer.SettingsMenuInput('Escape'); return true;
+                case 'Up': case 'W':          Outer.SettingsMenuInput('Up');      return true;
+                case 'Down': case 'S':        Outer.SettingsMenuInput('Down');    return true;
+                case 'Left': case 'A':        Outer.SettingsMenuInput('Left');    return true;
+                case 'Right': case 'D':       Outer.SettingsMenuInput('Right');   return true;
+                case 'Q':                     Outer.SettingsMenuInput('PrevTab'); return true;
+                case 'E':                     Outer.SettingsMenuInput('NextTab'); return true;
+                case 'MouseScrollUp':         Outer.SettingsMenuInput('Up');      return true;
+                case 'MouseScrollDown':       Outer.SettingsMenuInput('Down');    return true;
+                case 'Enter': case 'SpaceBar': Outer.SettingsMenuInput('Enter');  return true;
+                case 'Escape': case 'Tilde':  Outer.SettingsMenuInput('Escape');  return true;
             }
         }
         return true;

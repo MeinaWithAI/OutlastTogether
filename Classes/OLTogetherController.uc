@@ -44,6 +44,151 @@ var bool bRemotePawnCrouched, bLocalRunning, bRemoteTalking, bMicTransmitting;
 var float AnimLockEndTime;
 var name LastCrouchLeanAnim;
 var config name BindSpeedrunReady, BindForceStart, BindPushToTalk, BindOpenSettings;
+var int LocalModelIndex, RemoteModelIndex;
+var bool bModelAnnounced;
+var int LastSentModelIndex;
+var float LastModelSendTime;
+var Pawn LastModeledPawn;
+var int LastRemoteSpecialMove;
+var float JumpOverLockZ;
+const NUM_PLAYER_MODELS = 11;
+
+// Returns the display name for a player model index.
+function string GetModelName(int Idx)
+{
+    switch (Idx)
+    {
+        case 0:  return "Miles Upshur";
+        case 1:  return "Faith";
+        case 2:  return "Father Martin";
+        case 3:  return "Glitchtrap";
+        case 4:  return "Richard Trager";
+        case 5:  return "Miles Upshur (Beta)";
+        case 6:  return "Chris Walker";
+        case 7:  return "Eddie Gluskin";
+        case 8:  return "Miles Upshur (Fingerless)";
+        case 9:  return "Waylon Park (Prisoner)";
+        case 10: return "Waylon Park";
+    }
+    return "Miles Upshur";
+}
+
+// Returns the SkeletalMesh package path for a model's body.
+function string GetModelBodyPath(int Idx)
+{
+    switch (Idx)
+    {
+        case 0:  return "02_Player.Pawn.Miles_beheaded";
+        case 1:  return "FaithPMContent.Meshes.Faith_Body";
+        case 2:  return "FatherMartinPM.FatherMartinRigged";
+        case 3:  return "Glitchy_Boi.Glitchy_Boi";
+        case 4:  return "SurgeonPM.Meshes.Surgeon_Body";
+        case 5:  return "MilesPM.Meshes.Miles_Body";
+        case 6:  return "ChrisPM.Meshes.Soldier_Body";
+        case 7:  return "EddiePM.Meshes.Eddie_Body";
+        case 8:  return "02_Player.Pawn.Miles_beheaded_fingerless";
+        case 9:  return "02_Waylon_Park.Mesh.Waylon_Park";
+        case 10: return "02_Waylon_Park.Mesh.Waylon_Park_IT";
+    }
+    return "02_Player.Pawn.Miles_beheaded";
+}
+
+// Returns the StaticMesh package path for a model's head.
+function string GetModelHeadPath(int Idx)
+{
+    switch (Idx)
+    {
+        case 0:  return "02_Player.Pawn.Miles_head";
+        case 1:  return "FaithPMContent.Meshes.Faith_Head";
+        case 2:  return "FatherMartinPM.FatherMarinHead";
+        case 3:  return "Glitchy_Boi.Head";
+        case 4:  return "SurgeonPM.Meshes.Surgeon_Head_Head";
+        case 5:  return "MilesPM.Meshes.Miles_Head";
+        case 6:  return "EddiePM.Meshes.Eddie_Head";
+        case 7:  return "EddiePM.Meshes.Eddie_Head";
+        case 8:  return "02_Player.Pawn.Miles_head";
+        case 9:  return "02_Player.Pawn.Miles_head";
+        case 10: return "02_Player.Pawn.Miles_head";
+    }
+    return "02_Player.Pawn.Miles_head";
+}
+
+// Swaps the body (ShadowProxy) and head (HeadMesh) meshes on a hero to the
+// given model. bLocalOwner controls head visibility: the local player never
+// sees their own head (it stays hidden but still casts shadows), while the
+// remote representation shows the head so others can see it.
+function ApplyModelToHero(OLHero H, int Idx, bool bLocalOwner)
+{
+    local SkeletalMesh BodyMesh;
+    local StaticMesh HeadStatic;
+
+    if (H == None)
+        return;
+
+    BodyMesh = SkeletalMesh(DynamicLoadObject(GetModelBodyPath(Idx), class'SkeletalMesh', true));
+    HeadStatic = StaticMesh(DynamicLoadObject(GetModelHeadPath(Idx), class'StaticMesh', true));
+
+    // The visible third-person body is the Mesh component; the ShadowProxy is
+    // the shadow caster. Swap both so the rendered body and its shadow match.
+    // All models share the Hero skeleton, so a plain SetSkeletalMesh keeps the
+    // animation state intact. This mirrors the OLCustomHero SDK swap exactly;
+    // forcing a skeletal/bone refresh here re-evaluates the foot/hand IK
+    // SkelControls mid-swap and distorts the limbs, so we deliberately avoid it.
+    if (BodyMesh != None)
+    {
+        if (H.Mesh != None)
+            H.Mesh.SetSkeletalMesh(BodyMesh);
+        if (H.ShadowProxy != None)
+            H.ShadowProxy.SetSkeletalMesh(BodyMesh);
+    }
+
+    if (H.HeadMesh != None && HeadStatic != None)
+    {
+        H.HeadMesh.SetStaticMesh(HeadStatic);
+        // Keep the head invisible to its owner but still shadow-casting; the
+        // remote representation renders the head so peers can see it.
+        H.HeadMesh.SetOwnerNoSee(bLocalOwner);
+        H.HeadMesh.SetHidden(bLocalOwner ? true : bHideLocalPawnDuringSpeedrun);
+        H.HeadMesh.CastShadow = true;
+        H.HeadMesh.bCastHiddenShadow = true;
+    }
+}
+
+// Applies the selected model to the local player's own pawn (for shadows) and
+// broadcasts the choice so peers update the remote representation.
+function ApplyLocalModel(int Idx)
+{
+    if (Idx < 0)
+        Idx = NUM_PLAYER_MODELS - 1;
+    if (Idx >= NUM_PLAYER_MODELS)
+        Idx = 0;
+    LocalModelIndex = Idx;
+
+    ApplyModelToHero(OLHero(Pawn), Idx, true);
+
+    if (Settings != None)
+    {
+        Settings.SelectedModelIndex = Idx;
+        Settings.SaveConfig();
+    }
+
+    bModelAnnounced = false;
+    LastSentModelIndex = -1;
+    if (ConnectionLink != None && ConnectionLink.bIsConnected)
+        ConnectionLink.SendText("MODEL," $ Idx $ "\n");
+
+    AddNotification("Model: " $ GetModelName(Idx));
+}
+
+exec function SetPlayerModel(int Idx)
+{
+    ApplyLocalModel(Idx);
+}
+
+function CyclePlayerModel(int Delta)
+{
+    ApplyLocalModel(LocalModelIndex + Delta);
+}
 function string ParseUrlFallback(string Url, string Key, string Parsed)
 {
     if (Parsed == "")
@@ -118,6 +263,9 @@ event PostBeginPlay()
     {
         Settings.SeedDefaults();
         ApplySettings();
+        LocalModelIndex = Settings.SelectedModelIndex;
+        if (LocalModelIndex < 0 || LocalModelIndex >= NUM_PLAYER_MODELS)
+            LocalModelIndex = 0;
     }
     bMicTransmitting = (Settings == None || !Settings.bPushToTalk);
     ConnectionLink = Spawn(class'OLTogetherLink', self);
@@ -232,6 +380,13 @@ event PlayerTick(float DeltaTime)
             LastSentPlayerName = LocalPlayerName;
             LastPlayerNameSendTime = WorldInfo.TimeSeconds;
         }
+        if (!bModelAnnounced || LocalModelIndex != LastSentModelIndex || WorldInfo.TimeSeconds - LastModelSendTime > 1.0)
+        {
+            ConnectionLink.SendText("MODEL," $ LocalModelIndex $ "\n");
+            bModelAnnounced = true;
+            LastSentModelIndex = LocalModelIndex;
+            LastModelSendTime = WorldInfo.TimeSeconds;
+        }
         if (WorldInfo.TimeSeconds - LastPingSendTime > 1.0)
         {
             LastPingSendTime = WorldInfo.TimeSeconds;
@@ -295,6 +450,12 @@ event PlayerTick(float DeltaTime)
         if (Settings != None)
             VoiceListener.SendControl("PROX," $ int(Settings.VoiceProximityNear) $ "," $ int(Settings.VoiceProximityFar));
     }
+    if (Pawn != None && Pawn != LastModeledPawn)
+    {
+        LastModeledPawn = Pawn;
+        if (LocalModelIndex != 0)
+            ApplyModelToHero(OLHero(Pawn), LocalModelIndex, true);
+    }
     if (RemotePawn == None && Pawn != None)
     {
         RemotePawn = Spawn(class'OLTogetherHero',,, Pawn.Location, Pawn.Rotation,, true);
@@ -315,6 +476,10 @@ event PlayerTick(float DeltaTime)
                     RemoteHero.Mesh.SetOwnerNoSee(true);
                     RemoteHero.Mesh.bUpdateSkelWhenNotRendered = true;
                     RemoteHero.Mesh.bTickAnimNodesWhenNotRendered = true;
+                    // Animations are cosmetic only; the pawn's position is driven
+                    // entirely by the networked location. Ignore any root motion
+                    // so anim clips can't shove the pawn around and stutter.
+                    RemoteHero.Mesh.RootMotionMode = RMM_Ignore;
                 }
                 if (RemoteHero.ShadowProxy != None)
                 {
@@ -322,6 +487,7 @@ event PlayerTick(float DeltaTime)
                     RemoteHero.ShadowProxy.SetHidden(bHideLocalPawnDuringSpeedrun);
                     RemoteHero.ShadowProxy.bUpdateSkelWhenNotRendered = true;
                     RemoteHero.ShadowProxy.bTickAnimNodesWhenNotRendered = true;
+                    RemoteHero.ShadowProxy.RootMotionMode = RMM_Ignore;
                 }
                 if (RemoteHero.HeadMesh != None)
                 {
@@ -335,6 +501,8 @@ event PlayerTick(float DeltaTime)
                     if (MyHero != None && MyHero.CameraMesh != None)
                         RemoteHero.CameraMeshShadowProxy.SetSkeletalMesh(MyHero.CameraMesh.SkeletalMesh);
                 }
+                if (RemoteModelIndex != 0)
+                    ApplyModelToHero(RemoteHero, RemoteModelIndex, false);
             }
         }
     }
@@ -345,8 +513,16 @@ event PlayerTick(float DeltaTime)
         ProjectedLoc.Y += LastReceivedVel.Y * DeltaTime;
         ProjectedLoc.Z += LastReceivedVel.Z * DeltaTime;
         LastReceivedLoc = ProjectedLoc;
-        if (LastLocomotionMode >= 2 && LastLocomotionMode <= 6)
-            EasedLoc = LastReceivedLoc;
+        // Movement is driven entirely by the networked position (interpolated),
+        // never by animation root motion. During jump-over special moves (SM 5 and 6)
+        // the network Z jitters as the arc is transmitted at 20 Hz, so we freeze Z
+        // at the pawn's current height and only update X/Y from the network.
+        // Every other mode eases the full 3-axis location smoothly.
+        if (LastLocomotionMode == 2 && (LastRemoteSpecialMove == 5 || LastRemoteSpecialMove == 6))
+        {
+            EasedLoc = VInterpTo(RemotePawn.Location, ProjectedLoc, DeltaTime, InterpSpeed);
+            EasedLoc.Z = RemotePawn.Location.Z;
+        }
         else
             EasedLoc = VInterpTo(RemotePawn.Location, ProjectedLoc, DeltaTime, InterpSpeed);
         RemotePawn.SetLocation(EasedLoc);
@@ -476,21 +652,12 @@ function SettingsMenuInput(name Key)
         case 'Down':  H.SettingsMoveSelection(1);  break;
         case 'Left':  H.SettingsAdjust(self, -1);  break;
         case 'Right': H.SettingsAdjust(self, 1);   break;
+        case 'PrevTab': H.CycleSettingsTab(-1); break;
+        case 'NextTab': H.CycleSettingsTab(1); break;
         case 'Enter': H.SettingsAdjust(self, 0);   break;
         case 'Escape':
-            if (H.InRebindTab())
-            {
-                H.SettingsTabTarget = 0.0;
-                H.SettingsTabTransitionVariant = Rand(H.NUM_SETTINGS_ANIMS);
-                H.SettingsHighlightedRow = 8;
-                H.RebindSlotIndex = -1;
-                H.HoveredSettingsRow = -1;
-            }
-            else
-            {
-                H.CloseSettingsMenu();
-                bSettingsMenuOpen = false;
-            }
+            H.CloseSettingsMenu();
+            bSettingsMenuOpen = false;
             break;
     }
 }
@@ -817,6 +984,16 @@ function OnReceiveData(string Data)
     local float SMs, NMs;
     local OLHero RH;
     if (Left(Data, 5) == "CHAT,") { AddChatLine(Right(Data, Len(Data) - 5)); return; }
+    if (Left(Data, 6) == "MODEL,")
+    {
+        F = SplitString(Data, ",", true);
+        if (F.Length >= 2)
+        {
+            RemoteModelIndex = int(F[1]);
+            ApplyModelToHero(OLHero(RemotePawn), RemoteModelIndex, false);
+        }
+        return;
+    }
     if (Left(Data, 5) == "NAME,")
     {
         RemotePlayerName = Right(Data, Len(Data) - 5);
@@ -859,6 +1036,7 @@ function OnReceiveData(string Data)
     HP = (F.Length >= 19) ? int(F[18]) : 100;
     LastReceivedLoc = IL;
     LastReceivedVel = IV;
+    LastRemoteSpecialMove = SM;
     if (LM != 3 && LM != 4 && LM != 5 && LM != 6 && LM != 10)
     {
         LastReceivedRot = IR;
@@ -1155,4 +1333,9 @@ defaultproperties
     bHideLocalPawnDuringSpeedrun=false
     SpeedrunOverlayAlpha=0.0
     SpeedrunOverlayPulse=0.0
+    LocalModelIndex=0
+    RemoteModelIndex=0
+    bModelAnnounced=false
+    LastSentModelIndex=-1
+    LastModelSendTime=-999.0
 }

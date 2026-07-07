@@ -30,8 +30,14 @@ var config bool bAutoReconnect;
 // Delay, in seconds, before an automatic reconnect attempt.
 var config float ReconnectDelay;
 
+// Selected player model in the Models tab.
+var config int SelectedModelIndex;
+
 // Set once so first-run defaults below are only seeded a single time.
 var config bool bConfigured;
+
+const MODEL_Default = 0;
+const MODEL_COUNT   = 11;
 
 function SeedDefaults()
 {
@@ -55,6 +61,7 @@ function SeedDefaults()
     bPushToTalk        = false;
     bAutoReconnect     = true;
     ReconnectDelay     = 5.0;
+    SelectedModelIndex = MODEL_Default;
     bConfigured        = true;
 
     SaveConfig();

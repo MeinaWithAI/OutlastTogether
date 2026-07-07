@@ -35,9 +35,12 @@ var int   SettingsHighlightedRow;    // highlighted row
 var bool  bRebindListening;    // waiting for a key press to bind
 var int   RebindSlotIndex;  // which rebind row (0-3) is being rebound
 var int   HoveredSettingsRow;      // row the mouse is hovering (-1=none, -2=back, 0+=rows, 100+=rebind)
-var float SettingsTabAnim;     // 0=main tab, 1=rebind tab
+var float SettingsTabAnim;     // eases on tab switch
 var float SettingsTabTarget;   // where SettingsTabAnim is heading
 var int   SettingsTabTransitionVariant; // which style for tab transition
+var int   SettingsTab;         // active tab: 0=General 1=Voice 2=Keybinds 3=Models
+var int   HoveredSettingsTab;  // tab header the mouse is over (-1=none)
+var int   ModelScroll;         // first visible row in the Models list
 
 // --- Speedrun HUD ---
 var float SpeedrunTimerAlpha;
@@ -47,6 +50,8 @@ var float SpeedrunAnimFlash;
 const REF_HEIGHT = 720.0;
 const NUM_SETTINGS_ANIMS = 16;
 const NUM_CHAT_ANIMS = 8;
+const NUM_MODEL_ROWS = 11;
+const MODEL_VISIBLE_ROWS = 8;
 
 // Chat animations states
 var int ChatAnimVariant;
@@ -170,6 +175,12 @@ function float MeasureRichW(string Text, float FontScale, float EmojiSize)
         I += 1;
     }
     return W;
+}
+
+function NoPause()
+{
+    if (PlayerOwner != None)
+        OLPlayerController(PlayerOwner).ForcePause(false);
 }
 
 // Draws a chat string, rendering {e:CODE} tokens as inline emoji tiles and the
@@ -1358,10 +1369,15 @@ function OpenSettingsMenu()
 {
     bSettingsOpen = true;
     SettingsOpenTarget = 1.0;
+    SettingsTab = 0;
     SettingsHighlightedRow = 0;
     HoveredSettingsRow = -1;
-    SettingsTabAnim = 0.0;
-    SettingsTabTarget = 0.0;
+    HoveredSettingsTab = -1;
+    ModelScroll = 0;
+    bRebindListening = false;
+    RebindSlotIndex = -1;
+    SettingsTabAnim = 1.0;
+    SettingsTabTarget = 1.0;
     // Pick a random entrance style each time it opens.
     SettingsOpenAnimVariant = Rand(NUM_SETTINGS_ANIMS);
 }
@@ -1382,40 +1398,37 @@ function ToggleSettingsMenu()
         OpenSettingsMenu();
 }
 
-function int NumSettingsRows()
-{
-    return 10;
-}
+// ---- Tab model ------------------------------------------------------------
+// The settings menu is organised into tabs. Each tab exposes a list of rows,
+// and SettingsHighlightedRow is a plain 0-based index within the active tab.
 
-function int NumRebindRows()
+function int NumSettingsTabs()
 {
     return 4;
 }
 
-function string RebindRowLabel(int RowIndex)
+function string SettingsTabName(int TabIndex)
 {
-    switch (RowIndex)
+    switch (TabIndex)
     {
-        case 0: return "Open Settings";
-        case 1: return "Toggle Ready";
-        case 2: return "Push To Talk";
-        case 3: return "Force Start";
+        case 0: return "General";
+        case 1: return "Voice";
+        case 2: return "Keybinds";
+        case 3: return "Models";
     }
     return "";
 }
 
-function string RebindRowValue(OLTogetherController PC, int RowIndex)
+function int NumSettingsRows()
 {
-    if (bRebindListening && RebindSlotIndex == RowIndex)
-        return "Press key...";
-    switch (RowIndex)
+    switch (SettingsTab)
     {
-        case 0: return string(PC.BindOpenSettings);
-        case 1: return string(PC.BindSpeedrunReady);
-        case 2: return string(PC.BindPushToTalk);
-        case 3: return string(PC.BindForceStart);
+        case 0: return 4; // General
+        case 1: return 3; // Voice
+        case 2: return 4; // Keybinds
+        case 3: return NUM_MODEL_ROWS; // Models
     }
-    return "";
+    return 0;
 }
 
 function CaptureRebindKey(OLTogetherController PC, name Key)
@@ -1432,25 +1445,44 @@ function CaptureRebindKey(OLTogetherController PC, name Key)
     PC.SaveConfig();
 }
 
+// Kept for callers that still ask whether the keybinds tab is active.
 function bool InRebindTab()
 {
-    return SettingsHighlightedRow >= 100;
+    return SettingsTab == 2;
 }
 
-function string SettingsRowLabel(int RowIndex)
+function string SettingsRowLabel(OLTogetherController PC, int RowIndex)
 {
-    switch (RowIndex)
+    switch (SettingsTab)
     {
-        case 0: return "Pause On Lost Focus";
-        case 1: return "Mouse Smoothing";
-        case 2: return "Hide Player Names";
-        case 3: return "Mute Everyone";
-        case 4: return "Push To Talk";
-        case 5: return "Auto Reconnect";
-        case 6: return "Force Start";
-        case 7: return "Voice Proximity";
-        case 8: return "Rebind Keys";
-        case 9: return "Close";
+        case 0:
+            switch (RowIndex)
+            {
+                case 0: return "Pause On Lost Focus";
+                case 1: return "Mouse Smoothing";
+                case 2: return "Hide Player Names";
+                case 3: return "Auto Reconnect";
+            }
+            break;
+        case 1:
+            switch (RowIndex)
+            {
+                case 0: return "Mute Everyone";
+                case 1: return "Push To Talk";
+                case 2: return "Voice Proximity";
+            }
+            break;
+        case 2:
+            switch (RowIndex)
+            {
+                case 0: return "Open Settings";
+                case 1: return "Toggle Ready";
+                case 2: return "Push To Talk";
+                case 3: return "Force Start";
+            }
+            break;
+        case 3:
+            return PC.GetModelName(RowIndex);
     }
     return "";
 }
@@ -1460,25 +1492,39 @@ function string SettingsRowValue(OLTogetherController PC, int RowIndex)
     if (PC.Settings == None)
         return "";
 
-    if (RowIndex == 8)
-        return ">";
-
-    if (RowIndex == 6 && PC.PlayerRole != 0)
-        return "";
-
-    switch (RowIndex)
+    switch (SettingsTab)
     {
-        case 0: return PC.Settings.bPauseOnLossFocus ? "[x]" : "[ ]";
-        case 1: return (PC.PlayerInput != None && PC.PlayerInput.bEnableMouseSmoothing) ? "[x]" : "[ ]";
-        case 2: return PC.Settings.bHidePlayerNames ? "[x]" : "[ ]";
-        case 3: return PC.Settings.bMuteEveryone ? "[x]" : "[ ]";
-        case 4: return PC.Settings.bPushToTalk ? "[x]" : "[ ]";
-        case 5: return PC.Settings.bAutoReconnect
-                    ? ("[x] (" $ int(PC.Settings.ReconnectDelay) $ "s)") : "[ ]";
-        case 6: return "Force Start";
-        case 7: return int(PC.Settings.VoiceProximityNear) $ "/" $ int(PC.Settings.VoiceProximityFar);
-        case 8: return ">";
-        case 9: return "";
+        case 0:
+            switch (RowIndex)
+            {
+                case 0: return PC.Settings.bPauseOnLossFocus ? "[x]" : "[ ]";
+                case 1: return (PC.PlayerInput != None && PC.PlayerInput.bEnableMouseSmoothing) ? "[x]" : "[ ]";
+                case 2: return PC.Settings.bHidePlayerNames ? "[x]" : "[ ]";
+                case 3: return PC.Settings.bAutoReconnect
+                            ? ("[x] (" $ int(PC.Settings.ReconnectDelay) $ "s)") : "[ ]";
+            }
+            break;
+        case 1:
+            switch (RowIndex)
+            {
+                case 0: return PC.Settings.bMuteEveryone ? "[x]" : "[ ]";
+                case 1: return PC.Settings.bPushToTalk ? "[x]" : "[ ]";
+                case 2: return int(PC.Settings.VoiceProximityNear) $ "/" $ int(PC.Settings.VoiceProximityFar);
+            }
+            break;
+        case 2:
+            if (bRebindListening && RebindSlotIndex == RowIndex)
+                return "Press key...";
+            switch (RowIndex)
+            {
+                case 0: return string(PC.BindOpenSettings);
+                case 1: return string(PC.BindSpeedrunReady);
+                case 2: return string(PC.BindPushToTalk);
+                case 3: return string(PC.BindForceStart);
+            }
+            break;
+        case 3:
+            return (RowIndex == PC.LocalModelIndex) ? "[x]" : "";
     }
     return "";
 }
@@ -1486,43 +1532,70 @@ function string SettingsRowValue(OLTogetherController PC, int RowIndex)
 function SettingsMoveSelection(int Delta)
 {
     local int Max;
-    if (InRebindTab())
-    {
-        Max = NumRebindRows();
-        SettingsHighlightedRow += Delta;
-        if (SettingsHighlightedRow < 100)
-            SettingsHighlightedRow = 100 + Max - 1;
-        if (SettingsHighlightedRow >= 100 + Max)
-            SettingsHighlightedRow = 100;
-    }
-    else
-    {
-        SettingsHighlightedRow += Delta;
-        if (SettingsHighlightedRow < 0)
-            SettingsHighlightedRow = NumSettingsRows() - 1;
-        if (SettingsHighlightedRow >= NumSettingsRows())
-            SettingsHighlightedRow = 0;
-    }
+    Max = NumSettingsRows();
+    if (Max <= 0)
+        return;
+    SettingsHighlightedRow += Delta;
+    if (SettingsHighlightedRow < 0)
+        SettingsHighlightedRow = Max - 1;
+    if (SettingsHighlightedRow >= Max)
+        SettingsHighlightedRow = 0;
+    ClampModelScroll();
 }
 
-// Left/Right adjusts the currently highlighted row. Direction lets the reconnect
-// delay step both ways; toggles simply flip.
+function CycleSettingsTab(int Delta)
+{
+    SettingsTab += Delta;
+    if (SettingsTab < 0)
+        SettingsTab = NumSettingsTabs() - 1;
+    if (SettingsTab >= NumSettingsTabs())
+        SettingsTab = 0;
+    SettingsHighlightedRow = 0;
+    ModelScroll = 0;
+    bRebindListening = false;
+    RebindSlotIndex = -1;
+    SettingsTabAnim = 0.0;
+    SettingsTabTarget = 1.0;
+    SettingsTabTransitionVariant = Rand(NUM_SETTINGS_ANIMS);
+}
+
+// Keeps the highlighted model row within the visible scroll window.
+function ClampModelScroll()
+{
+    if (SettingsTab != 3)
+        return;
+    if (SettingsHighlightedRow < ModelScroll)
+        ModelScroll = SettingsHighlightedRow;
+    if (SettingsHighlightedRow >= ModelScroll + MODEL_VISIBLE_ROWS)
+        ModelScroll = SettingsHighlightedRow - MODEL_VISIBLE_ROWS + 1;
+    if (ModelScroll < 0)
+        ModelScroll = 0;
+}
+
 function SettingsMenuClick(OLTogetherController PC)
 {
-    if (HoveredSettingsRow == -2 && InRebindTab())
+    // Clicking a tab header switches tabs.
+    if (HoveredSettingsTab >= 0 && HoveredSettingsTab != SettingsTab)
     {
-        SettingsHighlightedRow = 8;
-        SettingsAdjust(PC, 0);
+        SettingsTab = HoveredSettingsTab;
+        SettingsHighlightedRow = 0;
+        ModelScroll = 0;
+        bRebindListening = false;
+        RebindSlotIndex = -1;
+        SettingsTabAnim = 0.0;
+        SettingsTabTarget = 1.0;
+        SettingsTabTransitionVariant = Rand(NUM_SETTINGS_ANIMS);
         return;
     }
 
     if (HoveredSettingsRow >= 0)
         SettingsHighlightedRow = HoveredSettingsRow;
 
-    if (SettingsHighlightedRow >= 100 && !bRebindListening)
+    // On the keybinds tab a click begins listening for a new key.
+    if (SettingsTab == 2 && !bRebindListening)
     {
         bRebindListening = true;
-        RebindSlotIndex = SettingsHighlightedRow - 100;
+        RebindSlotIndex = SettingsHighlightedRow;
         return;
     }
 
@@ -1534,71 +1607,69 @@ function SettingsAdjust(OLTogetherController PC, int Direction)
     if (PC.Settings == None)
         return;
 
-    if (SettingsHighlightedRow >= 100)
+    if (SettingsTab == 2)
     {
         if (!bRebindListening)
         {
             bRebindListening = true;
-            RebindSlotIndex = SettingsHighlightedRow - 100;
+            RebindSlotIndex = SettingsHighlightedRow;
         }
         return;
     }
 
-    if (SettingsHighlightedRow == 8)
+    if (SettingsTab == 3)
     {
-        SettingsHighlightedRow = 100;
-        SettingsTabTarget = 1.0;
-        SettingsTabTransitionVariant = Rand(NUM_SETTINGS_ANIMS);
-        HoveredSettingsRow = -1;
-        return;
-    }
-    if (SettingsHighlightedRow == 9)
-    {
-        CloseSettingsMenu();
+        PC.ApplyLocalModel(SettingsHighlightedRow);
         return;
     }
 
-    switch (SettingsHighlightedRow)
+    if (SettingsTab == 0)
     {
-        case 0:
-            PC.Settings.bPauseOnLossFocus = !PC.Settings.bPauseOnLossFocus;
-            PC.ConsoleCommand("set Engine.GameViewportClient bPauseOnLossOfFocus " $ (PC.Settings.bPauseOnLossFocus ? "True" : "False"));
-            break;
-        case 1:
-            if (PC.PlayerInput != None)
-            {
-                PC.PlayerInput.bEnableMouseSmoothing = !PC.PlayerInput.bEnableMouseSmoothing;
-                PC.PlayerInput.SaveConfig();
-            }
-            break;
-        case 2: PC.Settings.bHidePlayerNames = !PC.Settings.bHidePlayerNames; break;
-        case 3: PC.Settings.bMuteEveryone = !PC.Settings.bMuteEveryone; break;
-        case 4:
-            PC.Settings.bPushToTalk = !PC.Settings.bPushToTalk;
-            if (PC.Settings.bPushToTalk)
-                PC.bMicTransmitting = false;
-            else
-                PC.bMicTransmitting = true;
-            break;
-        case 5:
-            if (Direction == 0)
-                PC.Settings.bAutoReconnect = !PC.Settings.bAutoReconnect;
-            else
-            {
-                PC.Settings.ReconnectDelay = FClamp(PC.Settings.ReconnectDelay + Direction * 1.0, 1.0, 60.0);
-                PC.Settings.bAutoReconnect = true;
-            }
-            break;
-        case 6: PC.ForceStartSpeedrun(); break;
-        case 7:
-            if (Direction != 0)
-            {
-                PC.Settings.VoiceProximityNear = FClamp(PC.Settings.VoiceProximityNear + Direction * 100.0, 200.0, 2000.0);
-                PC.Settings.VoiceProximityFar = FClamp(PC.Settings.VoiceProximityFar + Direction * 200.0, 500.0, 5000.0);
-            }
-            break;
-        default:
-            break;
+        switch (SettingsHighlightedRow)
+        {
+            case 0:
+                PC.Settings.bPauseOnLossFocus = !PC.Settings.bPauseOnLossFocus;
+                PC.ConsoleCommand("set Engine.GameViewportClient bPauseOnLossOfFocus " $ (PC.Settings.bPauseOnLossFocus ? "True" : "False"));
+                break;
+            case 1:
+                if (PC.PlayerInput != None)
+                {
+                    PC.PlayerInput.bEnableMouseSmoothing = !PC.PlayerInput.bEnableMouseSmoothing;
+                    PC.PlayerInput.SaveConfig();
+                }
+                break;
+            case 2: PC.Settings.bHidePlayerNames = !PC.Settings.bHidePlayerNames; break;
+            case 3:
+                if (Direction == 0)
+                    PC.Settings.bAutoReconnect = !PC.Settings.bAutoReconnect;
+                else
+                {
+                    PC.Settings.ReconnectDelay = FClamp(PC.Settings.ReconnectDelay + Direction * 1.0, 1.0, 60.0);
+                    PC.Settings.bAutoReconnect = true;
+                }
+                break;
+        }
+    }
+    else if (SettingsTab == 1)
+    {
+        switch (SettingsHighlightedRow)
+        {
+            case 0: PC.Settings.bMuteEveryone = !PC.Settings.bMuteEveryone; break;
+            case 1:
+                PC.Settings.bPushToTalk = !PC.Settings.bPushToTalk;
+                if (PC.Settings.bPushToTalk)
+                    PC.bMicTransmitting = false;
+                else
+                    PC.bMicTransmitting = true;
+                break;
+            case 2:
+                if (Direction != 0)
+                {
+                    PC.Settings.VoiceProximityNear = FClamp(PC.Settings.VoiceProximityNear + Direction * 100.0, 200.0, 2000.0);
+                    PC.Settings.VoiceProximityFar = FClamp(PC.Settings.VoiceProximityFar + Direction * 200.0, 500.0, 5000.0);
+                }
+                break;
+        }
     }
 
     PC.Settings.SaveConfig();
@@ -1697,9 +1768,11 @@ function DrawSettingsMenu(OLTogetherController PC)
     local float A, OffX, OffY, Sc;
     local float PanelW, PanelH, PanelX, PanelY, Pad, RowH, HeaderH;
     local float CX, CY, TitleScale, RowScale, ValScale;
-    local int I, Rows;
+    local int I, Rows, VisibleRows, StartIdx, EndIdx;
     local string Val;
     local byte BaseA;
+    local float TabW, TabX, TabY, TabH, TabScale;
+    local string TabLabel;
     local OLTogetherInput Input;
 
     if (SettingsOpenAnim <= 0.01 && !bSettingsOpen)
@@ -1709,24 +1782,30 @@ function DrawSettingsMenu(OLTogetherController PC)
         bRebindListening = false;
 
     HoveredSettingsRow = -1;
+    HoveredSettingsTab = -1;
 
     GetSettingsOpenAnimState(A, OffX, OffY, Sc);
     if (A <= 0.01)
         return;
 
     Rows = NumSettingsRows();
-    if (InRebindTab())
-        Rows = NumRebindRows();
 
     TitleScale = 1.05 * UIScale * Sc;
     RowScale = 0.85 * UIScale * Sc;
     ValScale = 0.85 * UIScale * Sc;
+    TabScale = 0.78 * UIScale * Sc;
     Pad = 18.0 * UIScale * Sc;
     RowH = MeasureH("Ag", RowScale) + 14.0 * UIScale * Sc;
+    TabH = MeasureH("Ag", TabScale) + 14.0 * UIScale * Sc;
     HeaderH = MeasureH("Ag", TitleScale) + 20.0 * UIScale * Sc;
 
     PanelW = FClamp(ViewW() * 0.34, 360.0 * UIScale, 620.0 * UIScale) * Sc;
-    PanelH = HeaderH + RowH * Rows + Pad * 2.0;
+
+    VisibleRows = Rows;
+    if (SettingsTab == 3 && Rows > MODEL_VISIBLE_ROWS)
+        VisibleRows = MODEL_VISIBLE_ROWS;
+
+    PanelH = HeaderH + TabH + RowH * VisibleRows + Pad * 2.0;
 
     PanelX = (ViewW() - PanelW) * 0.5 + OffX;
     PanelY = (ViewH() - PanelH) * 0.5 + OffY;
@@ -1748,68 +1827,77 @@ function DrawSettingsMenu(OLTogetherController PC)
     CY = PanelY + Pad;
 
     DrawLabel("Multiplayer Settings", CX, CY, TitleScale, 232, 210, 188, byte(255.0 * A));
-
-    if (InRebindTab())
-    {
-        DrawLabel(" < Back (Esc)", PanelX + PanelW - Pad - MeasureW(" < Back (Esc)", RowScale), CY, RowScale, 160, 200, 240, byte(255.0 * A));
-        if (MouseY >= CY - 3.0 * UIScale && MouseY < CY + RowH && MouseX >= PanelX + PanelW - Pad - MeasureW(" < Back (Esc)", RowScale) && MouseX < PanelX + PanelW - Pad * 0.5)
-            HoveredSettingsRow = -2;
-    }
     CY += HeaderH;
 
-    if (InRebindTab())
+    // ---- Tab strip ---------------------------------------------------------
+    TabW = (PanelW - Pad * 2.0) / float(NumSettingsTabs());
+    for (I = 0; I < NumSettingsTabs(); I++)
     {
-        for (I = 0; I < Rows; I++)
-        {
-            BaseA = byte(255.0 * A);
-            if (MouseY >= CY - 3.0 * UIScale && MouseY < CY + RowH - 3.0 * UIScale &&
-                MouseX >= PanelX + Pad * 0.5 && MouseX < PanelX + PanelW - Pad * 0.5)
-            {
-                HoveredSettingsRow = 100 + I;
-                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
-                              70, 120, 90, byte(140.0 * A));
-            }
-            else if (SettingsHighlightedRow == 100 + I)
-            {
-                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
-                              70, 90, 120, byte(120.0 * A));
-            }
+        TabX = PanelX + Pad + I * TabW;
+        TabY = CY;
+        TabLabel = SettingsTabName(I);
 
-            DrawLabel(RebindRowLabel(I), CX, CY, RowScale, byte(230), byte(232), byte(240), BaseA);
-            Val = RebindRowValue(PC, I);
-            DrawLabel(Val, PanelX + PanelW - Pad - MeasureW(Val, ValScale), CY, ValScale, 200, 220, 200, BaseA);
-            CY += RowH;
+        if (MouseX >= TabX && MouseX < TabX + TabW - 1.0 * UIScale
+            && MouseY >= TabY && MouseY < TabY + TabH)
+        {
+            HoveredSettingsTab = I;
+            DrawFilledBox(TabX, TabY, TabW - 2.0 * UIScale, TabH,
+                          70, 120, 90, byte(150.0 * A));
         }
+        else if (I == SettingsTab)
+        {
+            DrawFilledBox(TabX, TabY, TabW - 2.0 * UIScale, TabH,
+                          70, 90, 120, byte(150.0 * A));
+        }
+        else
+        {
+            DrawFilledBox(TabX, TabY, TabW - 2.0 * UIScale, TabH,
+                          30, 32, 38, byte(120.0 * A));
+        }
+
+        DrawLabel(TabLabel, TabX + 4.0 * UIScale, TabY + 3.0 * UIScale,
+                  TabScale, 220, 222, 230, byte(255.0 * A));
     }
-    else
+    CY += TabH + Pad * 0.5;
+
+    // ---- Rows --------------------------------------------------------------
+    StartIdx = (SettingsTab == 3) ? ModelScroll : 0;
+    EndIdx = StartIdx + VisibleRows;
+    if (EndIdx > Rows)
+        EndIdx = Rows;
+
+    for (I = StartIdx; I < EndIdx; I++)
     {
-        for (I = 0; I < Rows; I++)
+        BaseA = byte(255.0 * A);
+
+        if (MouseY >= CY - 3.0 * UIScale && MouseY < CY + RowH - 3.0 * UIScale
+            && MouseX >= PanelX + Pad * 0.5 && MouseX < PanelX + PanelW - Pad * 0.5)
         {
-            BaseA = byte(255.0 * A);
-            if (MouseY >= CY - 3.0 * UIScale && MouseY < CY + RowH - 3.0 * UIScale &&
-                MouseX >= PanelX + Pad * 0.5 && MouseX < PanelX + PanelW - Pad * 0.5)
-            {
-                HoveredSettingsRow = I;
-                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
-                              70, 120, 90, byte(140.0 * A));
-            }
-            else if (I == SettingsHighlightedRow)
-            {
-                DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
-                              70, 90, 120, byte(120.0 * A));
-            }
-
-            DrawLabel(SettingsRowLabel(I), CX, CY, RowScale,
-                      byte(230), byte(232), byte(240), BaseA);
-
-            Val = SettingsRowValue(PC, I);
-            if (Val != "")
-                DrawLabel(Val, PanelX + PanelW - Pad - MeasureW(Val, ValScale), CY, ValScale,
-                          200, 220, 200, BaseA);
-
-            CY += RowH;
+            HoveredSettingsRow = I;
+            DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
+                          70, 120, 90, byte(140.0 * A));
         }
+        else if (I == SettingsHighlightedRow)
+        {
+            DrawFilledBox(PanelX + Pad * 0.5, CY - 3.0 * UIScale, PanelW - Pad, RowH,
+                          70, 90, 120, byte(120.0 * A));
+        }
+
+        DrawLabel(SettingsRowLabel(PC, I), CX, CY, RowScale,
+                  byte(230), byte(232), byte(240), BaseA);
+
+        Val = SettingsRowValue(PC, I);
+        if (Val != "")
+            DrawLabel(Val, PanelX + PanelW - Pad - MeasureW(Val, ValScale), CY, ValScale,
+                      200, 220, 200, BaseA);
+
+        CY += RowH;
     }
+
+    // Models scrollbar
+    if (SettingsTab == 3 && Rows > MODEL_VISIBLE_ROWS)
+        DrawScrollbar(PanelX + PanelW - 5.0 * UIScale, CY - 3.0 * UIScale - RowH * VisibleRows,
+                      RowH * VisibleRows, Rows, MODEL_VISIBLE_ROWS, ModelScroll, A);
 
     // Draw custom cursor
     DrawCursor(A);
@@ -1837,6 +1925,7 @@ event PostRender()
     UpdateChatAnimation(PC, Delta);
     UpdateSettingsOpenAnimation(Delta);
     UpdateEmojiPickerAnimation(Delta);
+    NoPause();
 
     if (IsAtMainMenuScreen())
         DrawMainMenuInfo(PC);
