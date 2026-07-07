@@ -52,7 +52,7 @@ OLGame
 ├── Config
 │   ├── DefaultGame.ini
 │   └── DefaultInput.ini
-├── CookedPCConsole
+└── CookedPCConsole
     └── MultiplayerContent
         ├── ChrisPM.upk
         ├── EddiePM.upk
