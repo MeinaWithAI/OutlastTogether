@@ -1,6 +1,7 @@
 __pycache__/
 *venv/
 *.exe
+*.u
 *.cmd
 
 nuitka-crash-report.xml
