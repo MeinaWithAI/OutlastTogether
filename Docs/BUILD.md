@@ -38,3 +38,31 @@ podman build -t outlast-unrealscript -f CI/Containerfile_unrealscript .
 Output should be at `%UDK%\UDKGame\Script\Multiplayer.u`
 
 See [the CI](./.github/workflows) for more details
+
+# UnrealPackages
+
+The .upks can be viewed & edited with the unreal editor provided with UDK setup alongside outlast level editor. They can optionally coooked for better performance. Whilst cooking them in theory should give better performance 99% of the time it ends up being just the same.
+
+
+# Packaging for release
+
+Here's file tree of a release zip for reference.
+
+```text
+OLGame
+├── Config
+│   ├── DefaultGame.ini
+│   ├── DefaultInput.ini
+├── CookedPCConsole
+│   ├── MultiplayerContent
+│   ├── ChrisPM.upk
+│   ├── EddiePM.upk
+│   ├── FaithPMContent.upk
+│   ├── FatherMartinPM.upk
+│   ├── Glitchy_Boi.upk
+│   ├── MilesPM.upk
+│   ├── Multiplayer.u
+│   ├── multiplayerassets.upk
+│   └── SurgeonPM.upk
+└── OutlastLauncher.exe
+```
