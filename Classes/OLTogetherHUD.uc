@@ -5,6 +5,7 @@ var array<string> Notifications;
 var array<float> NotificationTimes;
 
 var int ChatScrollIndex;
+var float ChatScrollVisual;
 var int MaxChatHistory;
 
 var float UIScale;
@@ -69,6 +70,13 @@ var int   HoveredEmojiIndex;    // absolute index into EmojiData.Codes, -1 = non
 
 // Emoji button rectangle (for the cursor hit-test), refreshed each chat draw
 var float EmojiBtnX, EmojiBtnY, EmojiBtnS;
+
+// Input-line geometry captured each draw so the click handler can map the
+// mouse X position to a caret index in the chat text.
+var float ChatInputX, ChatInputY, ChatInputW, ChatInputH;
+var float ChatInputScroll;      // horizontal pixel scroll of the input text
+var bool  bChatSelectingDrag;   // mouse button held and dragging a selection
+var float LastCaretMoveTime;    // resets the caret blink so it stays solid while editing
 
 const EMOJI_CACHE_MAX = 320;
 const NUM_EMOJI_ANIMS = 6;
@@ -717,8 +725,14 @@ function UpdateChatAnimation(OLTogetherController PC, float Delta)
     ChatPanelOpenAnim += ((PC.bChatMode ? 1.0 : 0.0) - ChatPanelOpenAnim) * FMin(1.0, Delta * OpenRate);
     ChatPanelOpenAnim = FClamp(ChatPanelOpenAnim, 0.0, 1.0);
 
+    // Smooth the visual scroll index toward the logical one.
+    ChatScrollVisual += (float(ChatScrollIndex) - ChatScrollVisual) * FMin(1.0, Delta * 18.0);
+
     if (!PC.bChatMode && ChatVisibilityAlpha <= 0.01)
+    {
         ChatScrollIndex = 0;
+        ChatScrollVisual = 0.0;
+    }
 }
 
 function DrawChatPanel(OLTogetherController PC)
@@ -738,6 +752,10 @@ function DrawChatPanel(OLTogetherController PC)
     local OLTogetherEmoji Ed;
     local bool bEmojiPickerVisible;
     local OLTogetherInput Input;
+    local float CaretX, SelStartX, SelEndX, TextAreaW, FullTextW, HScroll;
+    local int SelA, SelB, CaretIdx;
+    local bool bCaretOn;
+    local float LogScrollOffset;
 
     GA = ChatVisibilityAlpha;
     if (GA <= 0.01)
@@ -817,19 +835,24 @@ function DrawChatPanel(OLTogetherController PC)
     CX = PanelX + Pad;
     CY = PanelY + Pad;
 
-    // Draw from the most recent lines upward; StartRowIndex is where to start
-    // reading from the Display array (oldest visible line).
+    // Clamp and snap visual scroll
+    ChatScrollVisual = FClamp(ChatScrollVisual, 0.0, float(MaxOffset));
+
+    // Draw lines with sub-line pixel offset for smooth scrolling.
     StartRowIndex = Total - LinesToDraw - ChatScrollIndex;
     if (StartRowIndex < 0)
         StartRowIndex = 0;
 
+    Canvas.PushMaskRegion(CX, CY, ContentW, LogH + 2.0 * UIScale);
+    LogScrollOffset = (ChatScrollVisual - float(ChatScrollIndex)) * LineH;
     Drawn = 0;
     for (I = StartRowIndex; I < Total && Drawn < LinesToDraw; I++)
     {
-        DrawRichLine(Display[I], CX, CY, FontSmall, LineH, 220, 222, 228, byte(255.0 * GA));
+        DrawRichLine(Display[I], CX, CY - LogScrollOffset, FontSmall, LineH, 220, 222, 228, byte(255.0 * GA));
         CY += LineH;
         Drawn++;
     }
+    Canvas.PopMaskRegion();
 
     if (Total > VisibleLines)
         DrawScrollbar(PanelX + PanelW - 5.0 * UIScale, PanelY + Pad, LogH, Total, VisibleLines, StartRowIndex, GA);
@@ -846,15 +869,53 @@ function DrawChatPanel(OLTogetherController PC)
     {
         DrawFilledBox(CX - 4.0 * UIScale, CY - 2.0 * UIScale, ContentW + 8.0 * UIScale, LineH + 4.0 * UIScale, 26, 28, 34, byte(210.0 * GA));
 
-        InputText = "> " $ PC.ChatText;
-        DrawRichLineTail(InputText $ (int(WorldInfo.TimeSeconds * 2.0) % 2 == 0 ? "_" : ""),
-            CX, CY, ContentW - BtnSize - 6.0 * UIScale, FontBody, LineH,
-            225, 227, 235, byte(255.0 * GA));
+        TextAreaW = ContentW - BtnSize - 6.0 * UIScale;
+        CaretIdx = PC.ChatCaretPos;
+        if (CaretIdx > Len(PC.ChatText))
+            CaretIdx = Len(PC.ChatText);
+
+        FullTextW = MeasureW("> " $ PC.ChatText, FontBody);
+        CaretX = MeasureW("> " $ Left(PC.ChatText, CaretIdx), FontBody);
+
+        HScroll = ChatInputScroll;
+        if (CaretX - HScroll > TextAreaW - 4.0 * UIScale)
+            HScroll = CaretX - TextAreaW + 4.0 * UIScale;
+        if (CaretX - HScroll < 0.0)
+            HScroll = CaretX;
+        if (HScroll < 0.0)
+            HScroll = 0.0;
+        ChatInputScroll = HScroll;
+
+        ChatInputX = CX;
+        ChatInputY = CY;
+        ChatInputW = TextAreaW;
+        ChatInputH = LineH;
+
+        Canvas.PushMaskRegion(CX, CY - 2.0 * UIScale, TextAreaW, LineH + 4.0 * UIScale);
+
+        SelA = ChatSelMinIdx(PC);
+        SelB = ChatSelMaxIdx(PC);
+        if (SelA != SelB)
+        {
+            SelStartX = CX + MeasureW("> " $ Left(PC.ChatText, SelA), FontBody) - HScroll;
+            SelEndX = CX + MeasureW("> " $ Left(PC.ChatText, SelB), FontBody) - HScroll;
+            DrawFilledBox(SelStartX, CY - 1.0 * UIScale, SelEndX - SelStartX, LineH + 2.0 * UIScale, 60, 100, 180, byte(140.0 * GA));
+        }
+
+        DrawLabel("> " $ PC.ChatText, CX - HScroll, CY, FontBody, 225, 227, 235, byte(255.0 * GA));
+
+        bCaretOn = (int((WorldInfo.TimeSeconds - LastCaretMoveTime) * 2.0) % 2 == 0);
+        if (bCaretOn)
+        {
+            DrawFilledBox(CX + CaretX - HScroll, CY, FMax(1.0, UIScale), LineH, 225, 227, 235, byte(255.0 * GA));
+        }
+
+        Canvas.PopMaskRegion();
 
         // Emoji button (uses the blank emoji texture as its face).
         EnsureEmojiData();
-        BtnY = CY - 2.0 * UIScale;                 // same top as input box
-        BtnSize = LineH + 4.0 * UIScale;            // same height as input box
+        BtnY = CY - 2.0 * UIScale;
+        BtnSize = LineH + 4.0 * UIScale;
         BtnX = PanelX + PanelW - Pad - BtnSize;
         EmojiBtnX = BtnX;
         EmojiBtnY = BtnY;
@@ -1108,6 +1169,47 @@ function bool IsMouseOverEmojiUI()
         && MouseY >= EmojiBtnY - 1.0 * UIScale && MouseY < EmojiBtnY + EmojiBtnS + 2.0 * UIScale)
         return true;
     return bEmojiPickerOpen && (HoveredEmojiTab >= 0 || HoveredEmojiIndex >= 0);
+}
+
+function int ChatSelMinIdx(OLTogetherController PC)
+{
+    if (PC.ChatSelStart < PC.ChatSelEnd) return PC.ChatSelStart;
+    return PC.ChatSelEnd;
+}
+
+function int ChatSelMaxIdx(OLTogetherController PC)
+{
+    if (PC.ChatSelStart > PC.ChatSelEnd) return PC.ChatSelStart;
+    return PC.ChatSelEnd;
+}
+
+function int ChatHitTestCaret(OLTogetherController PC, float ScreenX)
+{
+    local float X, W, HScroll, CharX, PrevX;
+    local int I, N;
+    local string Prefix;
+
+    if (PC == None) return 0;
+    X = ChatInputX;
+    W = ChatInputW;
+    HScroll = ChatInputScroll;
+    Prefix = "> ";
+    N = Len(PC.ChatText);
+
+    PrevX = 0.0;
+    for (I = 0; I <= N; I++)
+    {
+        CharX = X + MeasureW(Prefix $ Left(PC.ChatText, I), 0.72 * UIScale) - HScroll;
+        if (I > 0 && ScreenX < (PrevX + CharX) * 0.5)
+            return I - 1;
+        PrevX = CharX;
+    }
+    return N;
+}
+
+function NoteChatCaretMove()
+{
+    LastCaretMoveTime = WorldInfo.TimeSeconds;
 }
 
 function DrawScrollbar(float X, float Y, float H, int Total, int Visible, int StartRowIndex, float GA)

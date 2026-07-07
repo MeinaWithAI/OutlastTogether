@@ -783,6 +783,29 @@ def _resolve_game_exe(folder, arch="Win64"):
     return None
 
 
+def _auto_detect_game_folder():
+    """Return the game folder if the script/exe sits inside or next to it.
+
+    Checks, in order:
+      1. The directory containing the script/exe.
+      2. Its parent directory.
+    Returns the first one that passes _validate_game_folder, or "" on failure.
+    No exceptions are raised.
+    """
+    try:
+        exe_dir = os.path.dirname(os.path.abspath(
+            sys.executable if getattr(sys, "frozen", False) else __file__
+        ))
+        candidates = [exe_dir, os.path.dirname(exe_dir)]
+        for folder in candidates:
+            ok, _ = _validate_game_folder(folder)
+            if ok:
+                return folder
+    except Exception:
+        pass
+    return ""
+
+
 def _sha256(text):
     return hashlib.sha256(text.encode("utf-8", "ignore")).hexdigest()
 
@@ -1506,12 +1529,24 @@ class OLTogetherApp(tk.Tk):
         host = ""
         port = RELAY_PORT
         self.overrideredirect(True)
+        # Start fully transparent so the boot fade-in is smooth.
+        try:
+            self.attributes("-alpha", 0.0)
+        except Exception:
+            pass
         self.minsize(1140, 780)
         self.configure(bg=self.BG)
         _set_app_icon(self)
+        self._closing = False
+        self._save_after_id = None
         self._drag_data = {"x": 0, "y": 0}
         self._pulse_phase = 0.0
         self._glow_widgets = []
+        self._animating_window = False
+        self._window_anim_job = None
+        self._boot_anim_name = None
+        self._close_anim_name = None
+        self._anim_frame_ms = self._detect_frame_interval_ms()
         self.host_var = tk.StringVar(value=host)
         self.port_var = tk.StringVar(value=str(port))
         self.name_var = tk.StringVar(value="Player")
@@ -1526,6 +1561,7 @@ class OLTogetherApp(tk.Tk):
         self.room_code_var = tk.StringVar(value=_generate_room_code())
         self.speedrun_mode_var = tk.BooleanVar(value=False)
         self.check_updates_var = tk.BooleanVar(value=True)
+        self._dismissed_update_version = ""
         self.game_path_var = tk.StringVar(value="")
         self.game_arch_var = tk.StringVar(value="Win64")
         self.game_extra_args_var = tk.StringVar(value="")
@@ -1563,17 +1599,19 @@ class OLTogetherApp(tk.Tk):
         self._master_clients: list = []  # active MasterServerClient instances while hosting
         self._build_ui()
         self._load_settings()
+        self._auto_detect_game_folder_if_needed()
         if not self.room_code_var.get().strip():
             self.room_code_var.set(_generate_room_code())
         if not self.region_var.get().strip() or self.region_var.get().strip() == "Auto":
             self.region_var.set(_detect_region())
         self.browser.start()
+        self._setup_autosave()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._pulse_tick)
-        self.after(200, self._apply_alt_tab_fix)
         self.after(500, self._tick_stats)
         self.after(1000, self._refresh_browser)
         self.after(2000, self._check_for_updates)
+        self._boot_slide_in()
 
     def _build_ui(self):
         self._configure_styles()
@@ -1650,22 +1688,242 @@ class OLTogetherApp(tk.Tk):
         self.after(400, self._restore_override)
 
     def _restore_override(self):
-        self.after(100, lambda: self.overrideredirect(True))
+        def _do():
+            if self.state() == "iconic":
+                self.after(200, self._restore_override)
+                return
+            self.overrideredirect(True)
+            self._apply_alt_tab_fix()
+        self.after(100, _do)
 
     def _apply_alt_tab_fix(self):
         try:
             _enable_alt_tab(self.winfo_id())
-            # Re-show so the updated ex-style registers with the taskbar/Alt+Tab list.
-            self.withdraw()
-            self.after(10, self.deiconify)
         except Exception:
             pass
+
+    def _window_size(self):
+        # Cache the window's natural size (content-driven) so the animation
+        # doesn't clip the footer by forcing a too-short height. Falls back to
+        # the minsize if the layout hasn't been measured yet.
+        cached = getattr(self, "_win_size", None)
+        if cached:
+            return cached
+        try:
+            self.update_idletasks()
+            w = max(self.winfo_reqwidth(), self.winfo_width(), 1140)
+            h = max(self.winfo_reqheight(), self.winfo_height(), 780)
+        except Exception:
+            w, h = 1140, 780
+        self._win_size = (w, h)
+        return self._win_size
+
+    def _apply_window_geometry(self, x, y):
+        w, h = self._window_size()
+        try:
+            self.geometry(f"{int(w)}x{int(h)}+{int(x)}+{int(y)}")
+        except Exception:
+            pass
+
+    def _detect_frame_interval_ms(self):
+        # Query the primary monitor's refresh rate so the animation redraw
+        # cadence matches the display (e.g. ~6ms on 165Hz, ~16ms on 60Hz)
+        # instead of a hard-coded 60fps. Falls back to 60Hz on any failure.
+        hz = 60
+        try:
+            user32 = ctypes.windll.user32
+
+            class DEVMODE(ctypes.Structure):
+                _fields_ = [
+                    ("dmDeviceName", ctypes.c_wchar * 32),
+                    ("dmSpecVersion", ctypes.c_ushort),
+                    ("dmDriverVersion", ctypes.c_ushort),
+                    ("dmSize", ctypes.c_ushort),
+                    ("dmDriverExtra", ctypes.c_ushort),
+                    ("dmFields", ctypes.c_ulong),
+                    ("dmPositionX", ctypes.c_long),
+                    ("dmPositionY", ctypes.c_long),
+                    ("dmDisplayOrientation", ctypes.c_ulong),
+                    ("dmDisplayFixedOutput", ctypes.c_ulong),
+                    ("dmColor", ctypes.c_short),
+                    ("dmDuplex", ctypes.c_short),
+                    ("dmYResolution", ctypes.c_short),
+                    ("dmTTOption", ctypes.c_short),
+                    ("dmCollate", ctypes.c_short),
+                    ("dmFormName", ctypes.c_wchar * 32),
+                    ("dmLogPixels", ctypes.c_ushort),
+                    ("dmBitsPerPel", ctypes.c_ulong),
+                    ("dmPelsWidth", ctypes.c_ulong),
+                    ("dmPelsHeight", ctypes.c_ulong),
+                    ("dmDisplayFlags", ctypes.c_ulong),
+                    ("dmDisplayFrequency", ctypes.c_ulong),
+                    ("dmICMMethod", ctypes.c_ulong),
+                    ("dmICMIntent", ctypes.c_ulong),
+                    ("dmMediaType", ctypes.c_ulong),
+                    ("dmDitherType", ctypes.c_ulong),
+                    ("dmReserved1", ctypes.c_ulong),
+                    ("dmReserved2", ctypes.c_ulong),
+                    ("dmPanningWidth", ctypes.c_ulong),
+                    ("dmPanningHeight", ctypes.c_ulong),
+                ]
+
+            dm = DEVMODE()
+            dm.dmSize = ctypes.sizeof(DEVMODE)
+            ENUM_CURRENT_SETTINGS = -1
+            if user32.EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, ctypes.byref(dm)):
+                freq = int(dm.dmDisplayFrequency)
+                # 0 or 1 means "hardware default"; ignore those.
+                if freq > 1:
+                    hz = freq
+        except Exception:
+            hz = 60
+        hz = max(30, min(360, hz))
+        return max(1, int(round(1000.0 / hz)))
+
+    def _ease_out_cubic(self, t):
+        t = max(0.0, min(1.0, t))
+        return 1.0 - (1.0 - t) ** 3
+
+    def _ease_out_quint(self, t):
+        t = max(0.0, min(1.0, t))
+        return 1.0 - (1.0 - t) ** 5
+
+    def _window_center(self):
+        sw = max(1, self.winfo_screenwidth())
+        sh = max(1, self.winfo_screenheight())
+        w, h = self._window_size()
+        return (sw - w) / 2, (sh - h) / 2
+
+    def _window_variants(self, mode):
+        cx, cy = self._window_center()
+        near = 180
+        far = 360
+        variants = [
+            ("left_short", cx - near, cy),
+            ("right_short", cx + near, cy),
+            ("up_short", cx, cy - near),
+            ("down_short", cx, cy + near),
+            ("left_far", cx - far, cy),
+            ("right_far", cx + far, cy),
+            ("up_far", cx, cy - far),
+            ("down_far", cx, cy + far),
+            ("up_left", cx - near, cy - near),
+            ("up_right", cx + near, cy - near),
+            ("down_left", cx - near, cy + near),
+            ("down_right", cx + near, cy + near),
+            ("up_left_far", cx - far, cy - far),
+            ("up_right_far", cx + far, cy - far),
+            ("down_left_far", cx - far, cy + far),
+            ("down_right_far", cx + far, cy + far),
+        ]
+        if mode == "boot":
+            return [(name, sx, sy, cx, cy) for name, sx, sy in variants]
+        return [(name, cx, cy, ex, ey) for name, ex, ey in variants]
+
+    def _run_window_anim(self, mode="boot"):
+        variants = self._window_variants(mode)
+        easings = [self._ease_out_cubic, self._ease_out_quint]
+        name, x0, y0, x1, y1 = random.choice(variants)
+        ease = random.choice(easings)
+        if mode == "boot":
+            self._boot_anim_name = name
+        else:
+            self._close_anim_name = name
+        self._animating_window = True
+        start = time.perf_counter()
+        duration = 0.42 if mode == "boot" else 0.30
+        try:
+            if mode == "boot":
+                self._apply_window_geometry(x0, y0)
+                self._apply_alt_tab_fix()
+                self.deiconify()
+        except Exception:
+            pass
+
+        def step():
+            t = (time.perf_counter() - start) / duration
+            if t >= 1.0:
+                t = 1.0
+            p = ease(t)
+            x = x0 + (x1 - x0) * p
+            y = y0 + (y1 - y0) * p
+            self._apply_window_geometry(x, y)
+            try:
+                alpha = p if mode == "boot" else 1.0 - p
+                self.attributes("-alpha", max(0.0, min(1.0, alpha)))
+            except Exception:
+                pass
+            if t < 1.0:
+                self._window_anim_job = self.after(self._anim_frame_ms, step)
+                return
+            self._animating_window = False
+            self._window_anim_job = None
+            if mode == "boot":
+                try:
+                    self.attributes("-alpha", 1.0)
+                except Exception:
+                    pass
+                cx, cy = self._window_center()
+                self._apply_window_geometry(cx, cy)
+            else:
+                self._destroy_safe()
+        step()
+
+    def _boot_slide_in(self):
+        self._run_window_anim("boot")
+
+    def _slide_out_and_close(self):
+        if self._window_anim_job is not None:
+            try:
+                self.after_cancel(self._window_anim_job)
+            except Exception:
+                pass
+            self._window_anim_job = None
+        self._run_window_anim("close")
+
+    def _destroy_safe(self):
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+    def _pulse_widget(self, widget, base_bg, accent, steps=6, grow=0.18, delay=18):
+        colors = []
+        for i in range(steps):
+            t = (i + 1) / steps
+            colors.append(self._blend(base_bg, accent, grow * t))
+        colors += list(reversed(colors[:-1]))
+
+        def tick(idx=0):
+            if idx >= len(colors):
+                try:
+                    widget.configure(bg=base_bg)
+                except Exception:
+                    pass
+                return
+            try:
+                widget.configure(bg=colors[idx])
+            except Exception:
+                return
+            self.after(delay, tick, idx + 1)
+        tick()
+
+    def _blend(self, c1, c2, t):
+        try:
+            r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
+            r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
+            r = int(r1 + (r2 - r1) * t)
+            g = int(g1 + (g2 - g1) * t)
+            b = int(b1 + (b2 - b1) * t)
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except Exception:
+            return c1
 
     def _neon_button(self, parent, text, command, color, **kw):
         frame = tk.Frame(parent, bg=self.BG)
         btn = tk.Label(frame, text=text, font=(APP_FONT, 9, "bold"), bg=self.CARD, fg=color, padx=14, pady=6, cursor="hand2", **kw)
         btn.pack(fill="x")
-        btn.bind("<Enter>", lambda e: btn.configure(bg=self._brighten(color, 0.15)))
+        btn.bind("<Enter>", lambda e: self._pulse_widget(btn, self.CARD, color, steps=5, grow=0.28, delay=16))
         btn.bind("<Leave>", lambda e: btn.configure(bg=self.CARD))
         btn.bind("<Button-1>", lambda e: command())
         frame._btn_label = btn
@@ -1693,11 +1951,15 @@ class OLTogetherApp(tk.Tk):
         tk.Label(parent, text=label, font=(APP_FONT, 9), bg=self.CARD, fg=self.DIM, anchor="w").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
         entry = tk.Entry(parent, textvariable=var, bg=self.INPUT_BG, fg=self.TEXT, insertbackground=self.CYAN, font=(APP_FONT, 9), relief="flat", bd=0, highlightthickness=1, highlightbackground=self.BORDER, highlightcolor=self.CYAN)
         entry.grid(row=row, column=1, sticky="ew", pady=4, padx=(0, 4))
+        entry.bind("<FocusIn>", lambda e: self._pulse_widget(entry, self.INPUT_BG, self.CYAN, steps=4, grow=0.12, delay=14))
         return entry
 
     def _checkbox(self, parent, row, col, text, var):
         cb = tk.Checkbutton(parent, text=text, variable=var, font=(APP_FONT, 9), bg=self.CARD, fg=self.TEXT, selectcolor=self.INPUT_BG, activebackground=self.CARD, activeforeground=self.CYAN, highlightthickness=0, bd=0)
         cb.grid(row=row, column=col, sticky="w", pady=2, padx=2)
+        cb.bind("<Enter>", lambda e: self._pulse_widget(cb, self.CARD, self.CYAN, steps=4, grow=0.14, delay=18))
+        cb.bind("<Leave>", lambda e: cb.configure(bg=self.CARD))
+        cb.configure(command=lambda w=cb: self._pulse_widget(w, self.CARD, self.GREEN if var.get() else self.MAGENTA, steps=5, grow=0.2, delay=16))
         return cb
 
     def _build_host_card(self, parent):
@@ -2016,6 +2278,17 @@ class OLTogetherApp(tk.Tk):
             self.game_path_var.set(path)
             self._update_game_status()
 
+    def _auto_detect_game_folder_if_needed(self):
+        current = self.game_path_var.get().strip()
+        if current:
+            ok, _ = _validate_game_folder(current)
+            if ok:
+                return
+        detected = _auto_detect_game_folder()
+        if detected:
+            self.game_path_var.set(detected)
+            self._update_game_status()
+
     def _update_game_status(self):
         if not hasattr(self, "_game_status_label"):
             return
@@ -2048,6 +2321,22 @@ class OLTogetherApp(tk.Tk):
             speedrun_mode=self.speedrun_mode_var.get(),
         )
 
+    def _setup_autosave(self):
+        vars_to_watch = [
+            self.game_path_var, self.game_arch_var, self.game_extra_args_var,
+            self.name_var, self.host_var, self.port_var, self.room_name_var,
+            self.region_var, self.player_limit_var, self.unlimited_var,
+            self.allow_chat_var, self.public_room_var, self.password_var,
+            self.room_code_var, self.speedrun_mode_var, self.check_updates_var,
+            self.mic_var, self.voice_input_gain_var, self.voice_noise_gate_var,
+            self.voice_output_volume_var,
+        ]
+        for var in vars_to_watch:
+            try:
+                var.trace_add("write", lambda *_: self._schedule_save())
+            except Exception:
+                pass
+
     def _load_settings(self):
         if not os.path.exists(self.config_path):
             return
@@ -2077,6 +2366,7 @@ class OLTogetherApp(tk.Tk):
                 self.password_var.set(cfg.password)
                 self.speedrun_mode_var.set(cfg.speedrun_mode)
             self.check_updates_var.set(data.get("check_updates", True))
+            self._dismissed_update_version = str(data.get("dismissed_update_version", ""))
             # Load theme settings
             theme = data.get("theme", {})
             if isinstance(theme, dict):
@@ -2121,6 +2411,7 @@ class OLTogetherApp(tk.Tk):
             "port": self.port_var.get().strip(),
             "room": self._room_config().to_dict() | {"password": self.password_var.get().strip()},
             "check_updates": self.check_updates_var.get(),
+            "dismissed_update_version": self._dismissed_update_version,
             "theme": {
                 "accent": self.theme_var.get(),
                 "dark_mode": self.theme_dark_var.get(),
@@ -2134,10 +2425,29 @@ class OLTogetherApp(tk.Tk):
             "master_servers": self.master_servers,
         }
         try:
-            with open(self.config_path, "w", encoding="utf-8") as f:
+            tmp = self.config_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            if os.path.exists(self.config_path):
+                os.replace(tmp, self.config_path)
+            else:
+                os.rename(tmp, self.config_path)
         except Exception:
-            pass
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+    def _schedule_save(self):
+        if self._save_after_id is not None:
+            self.after_cancel(self._save_after_id)
+        self._save_after_id = self.after(800, self._do_deferred_save)
+
+    def _do_deferred_save(self):
+        self._save_after_id = None
+        self._save_settings()
 
     def discovery_payload(self):
         room = self._room_config()
@@ -2424,6 +2734,8 @@ class OLTogetherApp(tk.Tk):
                     return [int(x) if x.isdigit() else 0 for x in v.split(".")]
                 
                 if parse_version(latest_version) > parse_version(current_version):
+                    if latest_version == self._dismissed_update_version:
+                        return
                     self.after(0, self._prompt_update, latest_version)
             except Exception as e:
                 if hasattr(e, "code") and e.code == 403:
@@ -2437,8 +2749,15 @@ class OLTogetherApp(tk.Tk):
         msg = f"A new version of OutlastTogether ({latest_version}) is available!\n\nWould you like to download it now?"
         if messagebox.askyesno("Update Available", msg):
             webbrowser.open("https://github.com/MeinaWithAI/OutlastTogether/releases")
+            # Remember this version so the prompt won't reappear until a newer
+            # release comes out.
+            self._dismissed_update_version = latest_version
+            self._save_settings()
 
     def _on_close(self):
+        if self._closing:
+            return
+        self._closing = True
         if self.server_running:
             self._stop_host()
         if self._voice_client is not None:
@@ -2462,7 +2781,7 @@ class OLTogetherApp(tk.Tk):
         except Exception:
             pass
         self._save_settings()
-        self.destroy()
+        self._slide_out_and_close()
 
 
 

@@ -15,6 +15,9 @@ var bool bPlayerNameAnnounced;
 var float LastPlayerNameSendTime;
 var bool bChatMode;
 var string ChatText;
+var int ChatCaretPos;
+var int ChatSelStart;
+var int ChatSelEnd;
 var OLTogetherSettings Settings;
 var bool bSettingsMenuOpen;
 var bool bSpeedrunMode, bSpeedrunReady, bSpeedrunCountdownActive, bPeerIsReady;
@@ -32,6 +35,7 @@ var vector LastReceivedLoc, LastReceivedVel;
 var rotator LastReceivedRot;
 var bool bHasReceivedData;
 var bool bLastRemoteCamcorder;
+var bool bCamcorderPendingRestore;
 var int LastRemoteCamcorderState;
 var name LastMovementAnim;
 var float InterpSpeed;
@@ -104,6 +108,9 @@ event PostBeginPlay()
     LastPlayerNameSendTime = -999.0;
     bChatMode = false;
     ChatText = "";
+    ChatCaretPos = 0;
+    ChatSelStart = 0;
+    ChatSelEnd = 0;
     LastLocomotionMode = 0;
     LastDoorInputDir = 0;
     Settings = new(self) class'OLTogetherSettings';
@@ -699,7 +706,34 @@ function UpdateDummyMovementAnim()
     local name AP;
     RH = OLHero(RemotePawn);
     if (RH == None || RH.ShadowProxy == None) return;
-    if (WorldInfo.TimeSeconds < AnimLockEndTime || LastLocomotionMode != 0) return;
+    if (WorldInfo.TimeSeconds < AnimLockEndTime) return;
+    if (LastLocomotionMode == 4)
+    {
+        FV = LastReceivedVel;
+        FV.Z = 0;
+        FS = VSize(FV);
+        if (FS < 20.0)
+        {
+            if (LastMovementAnim != 'None')
+            {
+                LastMovementAnim = 'None';
+                StopBodyAnim(0.15);
+            }
+            return;
+        }
+        YR = RemotePawn.Rotation.Yaw * (3.1415927 / 180.0);
+        SD.X = Cos(YR + 1.5707963); SD.Y = Sin(YR + 1.5707963); SD.Z = 0;
+        VD = FV / FS;
+        SDt = (VD.X * SD.X) + (VD.Y * SD.Y);
+        AP = (SDt > 0.0) ? 'player_ledge_move_right_90_inside' : 'player_ledge_move_left_90_inside';
+        if (AP != LastMovementAnim)
+        {
+            LastMovementAnim = AP;
+            PlayBodyAnim(AP, 0.2, 0.0, true, 1.0);
+        }
+        return;
+    }
+    if (LastLocomotionMode != 0) return;
     if (!bRemotePawnCrouched)
     {
         if (LastMovementAnim != 'None')
@@ -759,6 +793,19 @@ function FinishInactiveReload()
         RH.ShadowProxyRightArmAnimSlot.StopCustomAnim(0.15);
     if (RH.ShadowProxyLeftArmAnimSlot != None)
         RH.ShadowProxyLeftArmAnimSlot.StopCustomAnim(0.15);
+}
+function RestoreCamcorderAfterLedge()
+{
+    local OLHero RH;
+    if (!bCamcorderPendingRestore) return;
+    bCamcorderPendingRestore = false;
+    RH = OLHero(RemotePawn);
+    if (RH == None) return;
+    if (LastLocomotionMode == 3 || LastLocomotionMode == 4) return;
+    if (!bLastRemoteCamcorder) return;
+    if (RH.CameraMeshShadowProxy != None)
+        RH.CameraMeshShadowProxy.SetHidden(false);
+    PlayCamcorderIdleAnim();
 }
 function OnReceiveData(string Data)
 {
@@ -914,9 +961,19 @@ function OnReceiveData(string Data)
         }
         else if ((PL == 3 || PL == 4) && bLastRemoteCamcorder)
         {
-            if (RH.CameraMeshShadowProxy != None)
-                RH.CameraMeshShadowProxy.SetHidden(false);
-            PlayCamcorderIdleAnim();
+            if (PL == 4 && (LM == 2 && (SM == 6 || SM == 14 || SM == 17 || SM == 19 || (SM >= 16 && SM <= 23))))
+            {
+                bCamcorderPendingRestore = true;
+                SetTimer(1.05, false, 'RestoreCamcorderAfterLedge');
+            }
+            else
+            {
+                bCamcorderPendingRestore = false;
+                ClearTimer('RestoreCamcorderAfterLedge');
+                if (RH.CameraMeshShadowProxy != None)
+                    RH.CameraMeshShadowProxy.SetHidden(false);
+                PlayCamcorderIdleAnim();
+            }
         }
         switch (LM)
         {
