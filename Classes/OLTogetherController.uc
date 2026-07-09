@@ -51,6 +51,8 @@ var float LastModelSendTime;
 var Pawn LastModeledPawn;
 var int LastRemoteSpecialMove;
 var float JumpOverLockZ;
+var rotator JumpOverLockRot;
+var vector JumpOverLockStartPos, JumpOverLockFwd;
 const NUM_PLAYER_MODELS = 11;
 
 // Returns the display name for a player model index.
@@ -358,7 +360,7 @@ event PlayerTick(float DeltaTime)
     local OLHero RemoteHero, MyHero;
     local int DoorState, LeanState, ExtraState, ExtraKind;
     local float GapToRemote;
-    local bool bFadeNow;
+    local bool bFadeNow, bJumpingOver;
     super.PlayerTick(DeltaTime);
     if (bSpeedrunControlsLocked)
     {
@@ -508,34 +510,51 @@ event PlayerTick(float DeltaTime)
     }
     if (RemotePawn != None && bHasReceivedData)
     {
-        ProjectedLoc = LastReceivedLoc;
-        ProjectedLoc.X += LastReceivedVel.X * DeltaTime;
-        ProjectedLoc.Y += LastReceivedVel.Y * DeltaTime;
-        ProjectedLoc.Z += LastReceivedVel.Z * DeltaTime;
-        LastReceivedLoc = ProjectedLoc;
         // Movement is driven entirely by the networked position (interpolated),
         // never by animation root motion. During jump-over special moves (SM 5 and 6)
-        // the network Z jitters as the arc is transmitted at 20 Hz, so we freeze Z
-        // at the pawn's current height and only update X/Y from the network.
-        // Every other mode eases the full 3-axis location smoothly.
-        if (LastLocomotionMode == 2 && (LastRemoteSpecialMove == 5 || LastRemoteSpecialMove == 6))
+        // the sender's velocity spikes from its root-motion move, so dead-reckoning
+        // by velocity overshoots and then snaps back. For those moves we skip the
+        // velocity extrapolation entirely and just ease smoothly toward the actual
+        // received position. Every other mode dead-reckons then eases as before.
+        bJumpingOver = (LastLocomotionMode == 2 && (LastRemoteSpecialMove == 5 || LastRemoteSpecialMove == 6));
+        if (bJumpingOver)
         {
+            ProjectedLoc = LastReceivedLoc - JumpOverLockStartPos;
+            ProjectedLoc = JumpOverLockStartPos + JumpOverLockFwd * (ProjectedLoc.X * JumpOverLockFwd.X + ProjectedLoc.Y * JumpOverLockFwd.Y);
+            ProjectedLoc.Z = LastReceivedLoc.Z;
             EasedLoc = VInterpTo(RemotePawn.Location, ProjectedLoc, DeltaTime, InterpSpeed);
-            EasedLoc.Z = RemotePawn.Location.Z;
         }
         else
+        {
+            ProjectedLoc = LastReceivedLoc;
+            ProjectedLoc.X += LastReceivedVel.X * DeltaTime;
+            ProjectedLoc.Y += LastReceivedVel.Y * DeltaTime;
+            ProjectedLoc.Z += LastReceivedVel.Z * DeltaTime;
+            LastReceivedLoc = ProjectedLoc;
             EasedLoc = VInterpTo(RemotePawn.Location, ProjectedLoc, DeltaTime, InterpSpeed);
+        }
         RemotePawn.SetLocation(EasedLoc);
-        EasedRot = RInterpTo(RemotePawn.Rotation, LastReceivedRot, DeltaTime, InterpSpeed);
-        EasedRot.Pitch = 0;
-        RemotePawn.SetRotation(EasedRot);
-        if (OLTogetherHero(RemotePawn) != None)
-            OLTogetherHero(RemotePawn).RemotePitch = LastReceivedRot.Pitch;
-        VelForAnim = LastReceivedVel;
-        if (LastLocomotionMode != 3)
-            VelForAnim.Z = 0;
-        RemotePawn.Velocity = VelForAnim;
-        RemotePawn.Acceleration = VelForAnim;
+        // During a jump-over the sender's yaw arrives jumpy at 20 Hz and the AI
+        // walking physics tries to steer the pawn toward its (spiked) velocity, so
+        // the body spins in place. Freeze the facing at the rotation captured when
+        // the move started and zero the drive velocity so nothing turns the pawn.
+        if (bJumpingOver)
+        {
+            RemotePawn.SetRotation(JumpOverLockRot);
+            RemotePawn.Velocity = vect(0,0,0);
+            RemotePawn.Acceleration = vect(0,0,0);
+        }
+        else
+        {
+            EasedRot = RInterpTo(RemotePawn.Rotation, LastReceivedRot, DeltaTime, InterpSpeed);
+            EasedRot.Pitch = 0;
+            RemotePawn.SetRotation(EasedRot);
+            VelForAnim = LastReceivedVel;
+            if (LastLocomotionMode != 3)
+                VelForAnim.Z = 0;
+            RemotePawn.Velocity = VelForAnim;
+            RemotePawn.Acceleration = VelForAnim;
+        }
         UpdateDummyMovementAnim();
         RemoteHero = OLHero(RemotePawn);
         if (RemoteHero != None)
@@ -848,15 +867,15 @@ function AddNotification(string Msg)
     H = OLTogetherHUD(HUD);
     if (H != None) H.AddNotification(Msg);
 }
-function PlayBodyAnim(name AnimName, float BlendIn, float BlendOut, bool bLoop, float Rate)
+function PlayBodyAnim(name AnimName, float BlendIn, float BlendOut, bool bLoop, float Rate, optional bool bRootMotion = true)
 {
     local OLHero TH;
     TH = OLHero(RemotePawn);
     if (TH == None) return;
     if (TH.ShadowProxyFullBodyAnimSlot != None)
-        TH.ShadowProxyFullBodyAnimSlot.PlayCustomAnim(AnimName, Rate, BlendIn, BlendOut, bLoop, true);
+        TH.ShadowProxyFullBodyAnimSlot.PlayCustomAnim(AnimName, Rate, BlendIn, BlendOut, bLoop, bRootMotion);
     else if (TH.ShadowProxy != None)
-        TH.ShadowProxy.PlayAnim(AnimName, Rate, bLoop, true, BlendIn);
+        TH.ShadowProxy.PlayAnim(AnimName, Rate, bLoop, bRootMotion, BlendIn);
 }
 function StopBodyAnim(float BlendOut)
 {
@@ -979,7 +998,7 @@ function OnReceiveData(string Data)
     local array<string> F;
     local vector IL, IV;
     local rotator IR;
-    local bool BC, CC;
+    local bool BC, CC, bWasJumpingOver, bJumpingOverNow;
     local int CS, LM, PL, SM, DD, LD, ED, ET, HP;
     local float SMs, NMs;
     local OLHero RH;
@@ -1036,6 +1055,22 @@ function OnReceiveData(string Data)
     HP = (F.Length >= 19) ? int(F[18]) : 100;
     LastReceivedLoc = IL;
     LastReceivedVel = IV;
+    // Capture the pawn's facing, start position and forward axis when a jump-over
+    // starts. In Outlast you can't strafe while vaulting, so the move is a straight
+    // line along the entry facing. We freeze the facing (no 20 Hz yaw spin) and
+    // project the networked target onto that line so lateral network jitter can't
+    // push the body sideways around the object.
+    bWasJumpingOver = (LastRemoteSpecialMove == 5 || LastRemoteSpecialMove == 6);
+    bJumpingOverNow = (SM == 5 || SM == 6);
+    if (bJumpingOverNow && !bWasJumpingOver)
+    {
+        JumpOverLockRot = (RemotePawn != None) ? RemotePawn.Rotation : IR;
+        JumpOverLockStartPos = (RemotePawn != None) ? RemotePawn.Location : IL;
+        JumpOverLockFwd = vector(JumpOverLockRot);
+        JumpOverLockFwd.Z = 0;
+        if (VSize(JumpOverLockFwd) > 0.0)
+            JumpOverLockFwd = Normal(JumpOverLockFwd);
+    }
     LastRemoteSpecialMove = SM;
     if (LM != 3 && LM != 4 && LM != 5 && LM != 6 && LM != 10)
     {
@@ -1164,8 +1199,8 @@ function OnReceiveData(string Data)
                 switch (SM)
                 {
                     case 3:  PlayBodyAnim('player_jump_on_spot', 0.1, 0.0, false, 1.0); break;
-                    case 5:  PlayBodyAnim((VSize(IV) > 300.0 ? 'player_jump_over_from_run' : 'player_jump_over_from_walk'), 0.1, 0.0, false, 1.0); break;
-                    case 6:  PlayBodyAnim('player_jump_over_to_ledge', 0.1, 0.0, false, 1.0); break;
+                    case 5:  PlayBodyAnim((VSize(IV) > 300.0 ? 'player_jump_over_from_run' : 'player_jump_over_from_walk'), 0.1, 0.0, false, 1.0, false); break;
+                    case 6:  PlayBodyAnim('player_jump_over_to_ledge', 0.1, 0.0, false, 1.0, false); break;
                     case 7:  PlayBodyAnim('player_slide_over_from_run', 0.1, 0.0, false, 1.0); break;
                     case 8:  PlayBodyAnim((VSize(IV) > 300.0 ? 'player_climb_up_from_run' : 'player_climb_up_from_walk'), 0.1, 0.0, false, 1.0); break;
                     case 9:  PlayBodyAnim('player_climb_up_wall_2m', 0.1, 0.0, false, 1.0); break;

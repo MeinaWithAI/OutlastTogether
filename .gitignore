@@ -2,6 +2,7 @@ __pycache__/
 *venv/
 *.exe
 *.cmd
+build_unrealscript.bat
 
 nuitka-crash-report.xml
 
